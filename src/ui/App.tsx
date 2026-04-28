@@ -7,6 +7,16 @@ import type { AnalyticalModelId } from "../physics/analyticalModels";
 import { buildGeometryPresets, clonePresetGeometry, type GeometryPreset } from "../physics/geometryPresets";
 import type { TouchstoneData } from "../physics/sParameters";
 import { validateMicrostrip, type FrequencySweep, type ValidationResult } from "../validation/engine";
+import { buildValidationReportArtifact } from "../validation/report";
+import {
+  createValidationRunRecord,
+  loadValidationRunHistory,
+  removeValidationRunRecord,
+  saveValidationRunHistory,
+  upsertValidationRunRecord,
+  validationFromRunRecord,
+  type ValidationRunRecord
+} from "../validation/runHistory";
 import { CircuitRoute } from "./routes/CircuitRoute";
 import { GeometryRoute } from "./routes/GeometryRoute";
 import { ResultsRoute } from "./routes/ResultsRoute";
@@ -33,6 +43,9 @@ export function App() {
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "complete" | "failed">("idle");
   const [runError, setRunError] = useState<string | null>(null);
   const [lastRunSignature, setLastRunSignature] = useState<string | null>(null);
+  const [runHistory, setRunHistory] = useState<ValidationRunRecord[]>(() =>
+    loadValidationRunHistory(window.localStorage)
+  );
 
   useEffect(() => {
     const onPopState = () => setPath(window.location.pathname === "/" ? "/workflow" : window.location.pathname);
@@ -51,7 +64,11 @@ export function App() {
     try {
       setRunStatus("running");
       setRunError(null);
-      setValidation(await validateMicrostrip({ modelId, geometry, sweep, touchstone }));
+      const nextValidation = await validateMicrostrip({ modelId, geometry, sweep, touchstone });
+      const artifact = buildValidationReportArtifact({ geometry, validation: nextValidation, touchstone });
+      const record = createValidationRunRecord({ artifact });
+      setValidation(nextValidation);
+      updateRunHistory(upsertValidationRunRecord(runHistory, record));
       setLastRunSignature(buildRunSignature({ modelId, geometry, sweep, touchstone }));
       setRunStatus("complete");
     } catch (error) {
@@ -83,6 +100,26 @@ export function App() {
 
   function updateTouchstone(nextTouchstone: TouchstoneData | null) {
     setTouchstone(nextTouchstone);
+  }
+
+  function selectRunRecord(record: ValidationRunRecord) {
+    setModelId(record.artifact.model.id);
+    setGeometry(record.artifact.geometry);
+    setSweep(record.artifact.frequencySweep);
+    setValidation(validationFromRunRecord(record));
+    setTouchstone(null);
+    setLastRunSignature(null);
+    setRunStatus("complete");
+    setRunError(null);
+  }
+
+  function deleteRunRecord(recordId: string) {
+    updateRunHistory(removeValidationRunRecord(runHistory, recordId));
+  }
+
+  function updateRunHistory(nextRunHistory: ValidationRunRecord[]) {
+    setRunHistory(nextRunHistory);
+    saveValidationRunHistory(window.localStorage, nextRunHistory);
   }
 
   const isValidationStale =
@@ -134,6 +171,9 @@ export function App() {
             runStatus={runStatus}
             runError={runError}
             onRun={() => void runValidation()}
+            runHistory={runHistory}
+            onSelectRun={selectRunRecord}
+            onDeleteRun={deleteRunRecord}
           />
         )}
         {activeRoute.path === "/circuit" && <CircuitRoute circuit={circuit} />}

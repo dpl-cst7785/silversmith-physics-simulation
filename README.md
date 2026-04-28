@@ -19,6 +19,7 @@ transmission-line geometry + materials -> analytical model -> mock S-parameters 
 - Deterministic mock microstrip solver that returns complex S11 and S21 values over a frequency sweep.
 - Validation metrics with expected value, observed value, absolute error, percent error, tolerance, and pass/fail status.
 - Exportable JSON validation reports containing geometry, material stackup, sweep settings, analytical results, mock S-parameters, solver metadata, validation metrics, and optional Touchstone summary.
+- Local run history for selecting prior validation records and restoring their geometry, sweep, analytical results, mock simulation output, and validation metrics.
 - Touchstone `.s1p` and `.s2p` parser for frequency units, real/imaginary, magnitude/angle, and dB/angle formats.
 
 ## Microstrip Model Assumptions
@@ -137,6 +138,7 @@ For the current transmission-line workflow:
 4. Optionally extract impedance from imported Touchstone S11.
 5. Emit pass/fail metrics based on percent tolerance.
 6. Export a validation report JSON artifact for review, regression comparison, or future cloud solver job records.
+7. Save the run locally so previous geometry/simulation/validation records can be selected again.
 
 Validation runs only when the user clicks `Run validation`, so edits can be staged before recomputing the report.
 

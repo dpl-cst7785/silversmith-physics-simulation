@@ -1,4 +1,4 @@
-import { Download, Play, Upload } from "lucide-react";
+import { Download, History, Play, Trash2, Upload } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 import { mToMm, mmToM, type RfGeometry } from "../../domain/geometry";
 import {
@@ -9,6 +9,7 @@ import {
 import { parseTouchstone, type TouchstoneData } from "../../physics/sParameters";
 import type { GeometryPreset } from "../../physics/geometryPresets";
 import type { FrequencySweep, ValidationResult } from "../../validation/engine";
+import type { ValidationRunRecord } from "../../validation/runHistory";
 import { downloadValidationReport } from "../downloadValidationReport";
 import { NumberField } from "./GeometryRoute";
 import { SParameterPlot, ValidationMetrics, ValidationReport } from "./ResultsRoute";
@@ -33,6 +34,9 @@ type Props = {
   runStatus: RunStatus;
   runError: string | null;
   onRun: () => void;
+  runHistory: ValidationRunRecord[];
+  onSelectRun: (record: ValidationRunRecord) => void;
+  onDeleteRun: (recordId: string) => void;
 };
 
 export function WorkflowRoute({
@@ -50,7 +54,10 @@ export function WorkflowRoute({
   onTouchstoneChange,
   runStatus,
   runError,
-  onRun
+  onRun,
+  runHistory,
+  onSelectRun,
+  onDeleteRun
 }: Props) {
   const trace = geometry.traces[0];
   const model = getAnalyticalModelDescriptor(modelId);
@@ -136,6 +143,11 @@ export function WorkflowRoute({
       <ValidationMetrics validation={validation} isValidationStale={isValidationStale} />
       <ValidationReport validation={validation} isValidationStale={isValidationStale} />
       <SParameterPlot validation={validation} isValidationStale={isValidationStale} />
+      <RunHistoryPanel
+        records={runHistory}
+        onSelectRun={onSelectRun}
+        onDeleteRun={onDeleteRun}
+      />
       <Suspense fallback={<div className="loading-panel">Loading 3D viewer...</div>}>
         <ViewerRoute geometry={geometry} modelId={modelId} />
       </Suspense>
@@ -165,6 +177,52 @@ export function WorkflowRoute({
       }
     });
   }
+}
+
+function RunHistoryPanel({
+  records,
+  onSelectRun,
+  onDeleteRun
+}: {
+  records: ValidationRunRecord[];
+  onSelectRun: (record: ValidationRunRecord) => void;
+  onDeleteRun: (recordId: string) => void;
+}) {
+  return (
+    <div className="table-section">
+      <div className="section-heading-row">
+        <h2>Local run history</h2>
+        <span className="run-history-count">{records.length} saved</span>
+      </div>
+      {records.length === 0 ? (
+        <p className="field-note">Run validation to save a local engineering record.</p>
+      ) : (
+        <div className="run-history-list">
+          {records.map((record) => (
+            <article className="run-history-item" key={record.id}>
+              <button className="run-history-main" onClick={() => onSelectRun(record)}>
+                <History size={18} />
+                <span>
+                  <strong>{record.label}</strong>
+                  <small>
+                    {new Date(record.createdAt).toLocaleString()} - {record.pass ? "PASS" : "FAIL"}
+                  </small>
+                </span>
+              </button>
+              <button
+                className="icon-button"
+                onClick={() => onDeleteRun(record.id)}
+                title="Delete run record"
+                aria-label={`Delete ${record.label}`}
+              >
+                <Trash2 size={17} />
+              </button>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function TouchstoneUpload({
