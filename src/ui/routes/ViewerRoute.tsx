@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BufferGeometry,
   Color,
-  DoubleSide,
   Float32BufferAttribute,
   Group,
   Mesh,
@@ -248,10 +247,7 @@ function ExtrudedMeshScene({
         <MeshSolid key={solid.id} solid={solid} />
       ))}
       {fieldMode === "solver" && (
-        <>
-          <FieldAuraRibbons geometry={geometry} fieldSolve={fieldSolve} />
-          <FieldVolumeCloud volume={fieldVolume} />
-        </>
+        <FieldVolumeCloud volume={fieldVolume} />
       )}
       <AnimatedFieldHeatmap samples={fieldSamples} onSelectSample={onSelectSample} />
       {trace && (
@@ -293,6 +289,7 @@ function FieldVolumeCloud({ volume }: { volume: FieldVolume }) {
     const positionsMm = volume.positions.map((value) => mToMm(value));
     bufferGeometry.setAttribute("position", new Float32BufferAttribute(positionsMm, 3));
     bufferGeometry.setAttribute("color", new Float32BufferAttribute(volume.colors, 3));
+    bufferGeometry.setAttribute("fieldDirection", new Float32BufferAttribute(volume.directions, 3));
     bufferGeometry.setAttribute("fieldAmplitude", new Float32BufferAttribute(volume.amplitudes, 1));
     bufferGeometry.setAttribute("fieldPhase", new Float32BufferAttribute(volume.phases, 1));
     return bufferGeometry;
@@ -308,7 +305,12 @@ function FieldVolumeCloud({ volume }: { volume: FieldVolume }) {
         ref={materialRef}
         transparent
         depthWrite={false}
-        uniforms={{ time: { value: 0 }, pointSize: { value: 3.2 } }}
+        uniforms={{
+          time: { value: 0 },
+          pointSize: { value: 6.6 },
+          traceStartMm: { value: mToMm(volume.traceStartM) },
+          traceLengthMm: { value: Math.max(0.001, mToMm(volume.traceLengthM)) }
+        }}
         vertexShader={fieldVolumeVertexShader}
         fragmentShader={fieldVolumeFragmentShader}
       />
@@ -318,19 +320,28 @@ function FieldVolumeCloud({ volume }: { volume: FieldVolume }) {
 
 const fieldVolumeVertexShader = `
   attribute vec3 color;
+  attribute vec3 fieldDirection;
   attribute float fieldAmplitude;
   attribute float fieldPhase;
   varying float vAmplitude;
   varying float vPhase;
   varying vec3 vColor;
   uniform float pointSize;
+  uniform float time;
+  uniform float traceStartMm;
+  uniform float traceLengthMm;
 
   void main() {
     vAmplitude = fieldAmplitude;
     vPhase = fieldPhase;
     vColor = clamp(color, 0.0, 1.0);
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = pointSize * (0.6 + fieldAmplitude * 1.4) * (300.0 / max(80.0, -mvPosition.z));
+    vec3 animatedPosition = position;
+    float flow = mod(position.x - traceStartMm + time * (5.8 + fieldAmplitude * 6.4) + fieldPhase * 1.9, traceLengthMm);
+    animatedPosition.x = traceStartMm + flow;
+    float pulse = sin(time * 3.4 - fieldPhase * 2.0);
+    animatedPosition.yz += fieldDirection.yz * pulse * (0.65 + fieldAmplitude * 1.45);
+    vec4 mvPosition = modelViewMatrix * vec4(animatedPosition, 1.0);
+    gl_PointSize = pointSize * (0.75 + fieldAmplitude * 1.65) * (300.0 / max(80.0, -mvPosition.z));
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
@@ -344,138 +355,15 @@ const fieldVolumeFragmentShader = `
   void main() {
     vec2 uv = gl_PointCoord - vec2(0.5);
     float radius = length(uv);
+    if (radius > 0.5) discard;
     float softDisc = smoothstep(0.5, 0.0, radius);
-    float core = smoothstep(0.22, 0.0, radius);
+    float core = smoothstep(0.2, 0.0, radius);
     float wave = 0.5 + 0.5 * sin(time * 3.2 - vPhase);
-    vec3 red = vec3(1.0, 0.12, 0.08);
-    vec3 blue = vec3(0.08, 0.46, 1.0);
+    vec3 red = vec3(1.0, 0.18, 0.1);
+    vec3 blue = vec3(0.05, 0.42, 1.0);
     vec3 fluidColor = mix(blue, red, wave);
-    vec3 color = mix(vColor, fluidColor, 0.72);
-    float alpha = softDisc * (0.004 + vAmplitude * 0.026) + core * vAmplitude * 0.012;
-    gl_FragColor = vec4(color, alpha);
-  }
-`;
-
-function FieldAuraRibbons({ geometry, fieldSolve }: { geometry: RfGeometry; fieldSolve: FieldSolverResult }) {
-  const materialRef = useRef<ShaderMaterial>(null);
-  const ribbonGeometry = useMemo(() => buildRibbonBufferGeometry(geometry, fieldSolve), [geometry, fieldSolve]);
-
-  useFrame(({ clock }) => {
-    if (materialRef.current) materialRef.current.uniforms.time.value = clock.elapsedTime;
-  });
-
-  return (
-    <mesh geometry={ribbonGeometry}>
-      <shaderMaterial
-        ref={materialRef}
-        transparent
-        depthWrite={false}
-        side={DoubleSide}
-        uniforms={{ time: { value: 0 } }}
-        vertexShader={fieldRibbonVertexShader}
-        fragmentShader={fieldRibbonFragmentShader}
-      />
-    </mesh>
-  );
-}
-
-function buildRibbonBufferGeometry(geometry: RfGeometry, fieldSolve: FieldSolverResult): BufferGeometry {
-  const trace = geometry.traces[0];
-  const bufferGeometry = new BufferGeometry();
-  if (!trace) return bufferGeometry;
-
-  const segments = 96;
-  const ribbonCount = 9;
-  const verticesPerRibbon = (segments + 1) * 2;
-  const positions: number[] = [];
-  const phases: number[] = [];
-  const strengths: number[] = [];
-  const indices: number[] = [];
-  const centerZM = trace.yM + trace.widthM / 2;
-  const maxField = Math.max(fieldSolve.field.maxElectricFieldVm, 1);
-  const spreadM = Math.max(trace.widthM * 1.8, geometry.stack.substrateHeightM * 1.3);
-  const heightBaseM = geometry.stack.substrateHeightM * 1.02;
-
-  for (let ribbon = 0; ribbon < ribbonCount; ribbon += 1) {
-    const ribbonFraction = ribbon / (ribbonCount - 1);
-    const lateral = (ribbonFraction - 0.5) * spreadM * 2.2;
-    const sideFalloff = Math.exp(-Math.abs(lateral) / spreadM);
-    const ribbonBaseIndex = ribbon * verticesPerRibbon;
-
-    for (let segment = 0; segment <= segments; segment += 1) {
-      const t = segment / segments;
-      const xM = trace.xM + trace.lengthM * t;
-      const crossSectionXM = Math.max(0, Math.min(fieldSolve.grid.domainWidthM, centerZM + lateral));
-      const field = sampleFieldForRibbon(fieldSolve, crossSectionXM, heightBaseM + geometry.stack.substrateHeightM * 0.2);
-      const normalized = Math.min(1, field / maxField);
-      const wave = Math.sin(t * Math.PI * 4 + ribbon * 0.9);
-      const zM = centerZM + lateral + wave * trace.widthM * 0.28 * sideFalloff;
-      const yCenterM = heightBaseM + geometry.stack.substrateHeightM * (0.22 + sideFalloff * 0.72);
-      const ribbonHalfHeightM = geometry.stack.substrateHeightM * (0.08 + sideFalloff * 0.16);
-      const phase = t * Math.PI * 2 + ribbon * 0.42;
-      const strength = Math.max(0.08, Math.sqrt(normalized) * sideFalloff);
-
-      positions.push(mToMm(xM), mToMm(yCenterM - ribbonHalfHeightM), mToMm(zM));
-      positions.push(mToMm(xM), mToMm(yCenterM + ribbonHalfHeightM), mToMm(zM));
-      phases.push(phase, phase);
-      strengths.push(strength, strength);
-    }
-
-    for (let segment = 0; segment < segments; segment += 1) {
-      const a = ribbonBaseIndex + segment * 2;
-      const b = a + 1;
-      const c = a + 2;
-      const d = a + 3;
-      indices.push(a, c, b, c, d, b);
-    }
-  }
-
-  bufferGeometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-  bufferGeometry.setAttribute("ribbonPhase", new Float32BufferAttribute(phases, 1));
-  bufferGeometry.setAttribute("ribbonStrength", new Float32BufferAttribute(strengths, 1));
-  bufferGeometry.setIndex(indices);
-  bufferGeometry.computeVertexNormals();
-  return bufferGeometry;
-}
-
-function sampleFieldForRibbon(fieldSolve: FieldSolverResult, xM: number, yM: number): number {
-  const x = Math.max(0, Math.min(fieldSolve.grid.cellsX - 1, Math.round(xM / fieldSolve.grid.dxM)));
-  const y = Math.max(0, Math.min(fieldSolve.grid.cellsY - 1, Math.round(yM / fieldSolve.grid.dyM)));
-  const index = y * fieldSolve.grid.cellsX + x;
-  return Math.hypot(
-    fieldSolve.field.electricFieldXVm[index] ?? 0,
-    fieldSolve.field.electricFieldYVm[index] ?? 0
-  );
-}
-
-const fieldRibbonVertexShader = `
-  attribute float ribbonPhase;
-  attribute float ribbonStrength;
-  varying float vPhase;
-  varying float vStrength;
-  varying float vAlong;
-
-  void main() {
-    vPhase = ribbonPhase;
-    vStrength = ribbonStrength;
-    vAlong = position.x;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-const fieldRibbonFragmentShader = `
-  varying float vPhase;
-  varying float vStrength;
-  uniform float time;
-
-  void main() {
-    float wave = 0.5 + 0.5 * sin(time * 2.1 - vPhase * 2.8);
-    float shimmer = 0.62 + 0.38 * sin(time * 4.8 + vPhase * 5.0);
-    vec3 blue = vec3(0.05, 0.44, 1.0);
-    vec3 cyan = vec3(0.08, 0.94, 1.0);
-    vec3 red = vec3(1.0, 0.16, 0.08);
-    vec3 color = mix(mix(blue, cyan, shimmer), red, wave);
-    float alpha = (0.018 + vStrength * 0.105) * (0.72 + wave * 0.28);
+    vec3 color = mix(vColor, fluidColor, 0.82);
+    float alpha = softDisc * (0.045 + vAmplitude * 0.18) + core * vAmplitude * 0.08;
     gl_FragColor = vec4(color, alpha);
   }
 `;

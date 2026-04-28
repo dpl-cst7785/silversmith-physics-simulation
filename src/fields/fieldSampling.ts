@@ -42,9 +42,12 @@ export type FieldSurface = {
 export type FieldVolume = {
   positions: number[];
   colors: number[];
+  directions: number[];
   amplitudes: number[];
   phases: number[];
   maxMagnitudeVm: number;
+  traceStartM: number;
+  traceLengthM: number;
 };
 
 export function buildTraceFieldSamples(
@@ -234,6 +237,7 @@ export function buildSolverFieldVolume(
   const maxMagnitudeVm = Math.max(fieldSolve.field.maxElectricFieldVm, 1);
   const positions: number[] = [];
   const colors: number[] = [];
+  const directions: number[] = [];
   const amplitudes: number[] = [];
   const phases: number[] = [];
   const yStopM = Math.min(fieldSolve.grid.domainHeightM, fieldSolve.grid.substrateHeightM * 2.7);
@@ -262,6 +266,12 @@ export function buildSolverFieldVolume(
           crossSectionXM + deterministicJitter(ix, iy, iz, 2) * fieldSolve.grid.domainWidthM * 0.006
         );
         colors.push(...fieldColor(softened, sign));
+        const direction = normalizeDirection({
+          x: 0.55 + softened * 0.45,
+          y: field.eyVm / maxMagnitudeVm,
+          z: field.exVm / maxMagnitudeVm
+        });
+        directions.push(direction.x, direction.y, direction.z);
         amplitudes.push(softened);
         phases.push(phaseRad);
       }
@@ -271,9 +281,12 @@ export function buildSolverFieldVolume(
   return {
     positions,
     colors,
+    directions,
     amplitudes,
     phases,
-    maxMagnitudeVm
+    maxMagnitudeVm,
+    traceStartM: xOffsetM,
+    traceLengthM: lengthM
   };
 }
 

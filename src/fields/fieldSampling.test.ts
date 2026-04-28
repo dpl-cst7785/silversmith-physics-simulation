@@ -86,8 +86,10 @@ describe("field sampling", () => {
     expect(volume.positions.length).toBeGreaterThan(0);
     expect(volume.positions.length % 3).toBe(0);
     expect(volume.colors).toHaveLength(volume.positions.length);
+    expect(volume.directions).toHaveLength(volume.positions.length);
     expect(volume.amplitudes).toHaveLength(volume.positions.length / 3);
     expect(volume.phases).toHaveLength(volume.positions.length / 3);
+    expect(volume.traceLengthM).toBe(geometry.traces[0].lengthM);
   });
 
   it("samples signed instantaneous field values from phase", () => {
