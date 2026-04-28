@@ -346,6 +346,22 @@ legend {
   margin-top: 2px;
 }
 
+.field-reference-panel {
+  background: #ffffff;
+  border: 1px solid #dfe7e4;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  overflow: auto;
+  padding: 18px;
+}
+
+.field-cross-section {
+  display: block;
+  min-width: 640px;
+  width: 100%;
+}
+
 .solve-overlay {
   align-items: center;
   background: rgba(16, 24, 32, 0.88);

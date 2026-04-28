@@ -12,6 +12,7 @@ import {
   Quaternion,
   ShaderMaterial,
   Uint16BufferAttribute,
+  Uint32BufferAttribute,
   Vector3
 } from "three";
 import { mToMm, type RfGeometry } from "../../domain/geometry";
@@ -222,6 +223,7 @@ export function ViewerRoute({ geometry, modelId }: Props) {
           <OrbitControls makeDefault enableDamping />
         </Canvas>
       </div>
+      <CrossSectionFieldPanel geometry={geometry} fieldSolve={fieldSolve} />
       <FieldDiagnosticsPanel
         fieldSolve={fieldSolve}
         selectedSample={selectedSample}
@@ -230,6 +232,97 @@ export function ViewerRoute({ geometry, modelId }: Props) {
       <RefinementSuggestionsPanel fieldSolve={fieldSolve} />
       <ConnectorTerminal frames={probeFrames} />
     </section>
+  );
+}
+
+function CrossSectionFieldPanel({
+  geometry,
+  fieldSolve
+}: {
+  geometry: RfGeometry;
+  fieldSolve: FieldSolverResult;
+}) {
+  const trace = geometry.traces[0];
+  const width = 720;
+  const height = 280;
+  const padding = 28;
+  const plotWidth = width - padding * 2;
+  const plotHeight = height - padding * 2;
+  const domainWidthM = fieldSolve.grid.domainWidthM;
+  const domainHeightM = Math.min(fieldSolve.grid.domainHeightM, fieldSolve.grid.substrateHeightM * 2.2);
+  const maxMagnitude = Math.max(fieldMagnitudePercentile(fieldSolve, 0.96), 1);
+  const cells = buildCrossSectionCells(fieldSolve, domainHeightM, maxMagnitude);
+  const arrows = buildCrossSectionArrows(fieldSolve, domainHeightM, maxMagnitude);
+  const xScale = (xM: number) => padding + (xM / domainWidthM) * plotWidth;
+  const yScale = (yM: number) => padding + plotHeight - (yM / domainHeightM) * plotHeight;
+  const substrateY = yScale(fieldSolve.grid.substrateHeightM);
+  const groundY = yScale(0);
+
+  return (
+    <div className="field-reference-panel">
+      <div>
+        <p className="eyebrow">Cross-section reference</p>
+        <h2>Solver E-field slice</h2>
+        <p className="field-note">
+          Heatmap opacity follows |E|. Arrows show local transverse E direction from the finite-difference solve.
+        </p>
+      </div>
+      <svg className="field-cross-section" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Microstrip E-field cross-section">
+        <defs>
+          <marker id="field-arrowhead" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="#1d2934" opacity="0.72" />
+          </marker>
+        </defs>
+        <rect x={padding} y={padding} width={plotWidth} height={plotHeight} fill="#eef4f1" rx="4" />
+        <rect
+          x={padding}
+          y={substrateY}
+          width={plotWidth}
+          height={groundY - substrateY}
+          fill="#7db7a0"
+          opacity="0.36"
+        />
+        {cells.map((cell) => (
+          <rect
+            key={cell.id}
+            x={xScale(cell.x0M)}
+            y={yScale(cell.y1M)}
+            width={Math.max(1, xScale(cell.x1M) - xScale(cell.x0M))}
+            height={Math.max(1, yScale(cell.y0M) - yScale(cell.y1M))}
+            fill={cell.color}
+            opacity={cell.opacity}
+          />
+        ))}
+        {arrows.map((arrow) => (
+          <line
+            key={arrow.id}
+            x1={xScale(arrow.xM)}
+            y1={yScale(arrow.yM)}
+            x2={xScale(arrow.xM + arrow.dxM)}
+            y2={yScale(arrow.yM + arrow.dyM)}
+            stroke="#1d2934"
+            strokeWidth={1.2 + arrow.strength * 1.6}
+            opacity={0.32 + arrow.strength * 0.58}
+            markerEnd="url(#field-arrowhead)"
+          />
+        ))}
+        <line x1={padding} y1={groundY} x2={padding + plotWidth} y2={groundY} stroke="#9a5a22" strokeWidth="4" />
+        {trace && (
+          <rect
+            x={xScale(trace.yM)}
+            y={substrateY - 6}
+            width={xScale(trace.yM + trace.widthM) - xScale(trace.yM)}
+            height={8}
+            fill="#8f3c11"
+            rx="2"
+          />
+        )}
+        <text x={padding} y={padding - 8} fill="#50656e" fontSize="12">air</text>
+        <text x={padding} y={substrateY + 16} fill="#50656e" fontSize="12">substrate</text>
+        <text x={padding} y={groundY - 8} fill="#765800" fontSize="12">ground plane</text>
+        {trace && <text x={xScale(trace.yM + trace.widthM / 2)} y={substrateY - 12} fill="#5b250b" fontSize="12" textAnchor="middle">trace</text>}
+      </svg>
+    </div>
   );
 }
 
@@ -325,7 +418,7 @@ function FieldCellGridMesh({
     bufferGeometry.setAttribute("position", new Float32BufferAttribute(grid.positions, 3));
     bufferGeometry.setAttribute("cellRelevance", new Float32BufferAttribute(grid.relevance, 1));
     bufferGeometry.setAttribute("cellPhase", new Float32BufferAttribute(grid.phases, 1));
-    bufferGeometry.setIndex(grid.indices);
+    bufferGeometry.setIndex(new Uint32BufferAttribute(grid.indices, 1));
     bufferGeometry.computeVertexNormals();
     return bufferGeometry;
   }, [grid]);
@@ -360,8 +453,8 @@ function buildFieldCellGrid(
   const trace = geometry.traces[0];
   if (!trace) return { positions: [], relevance: [], phases: [], indices: [] };
 
-  const lengthSlices = scaledSampleCount(16, visualSettings.pointScale, visualSettings.spacing);
-  const cellStride = Math.max(1, Math.round(visualSettings.spacing / Math.max(0.35, visualSettings.pointScale)));
+  const lengthSlices = scaledSampleCount(8, visualSettings.pointScale, visualSettings.spacing);
+  const cellStride = Math.max(2, Math.round((visualSettings.spacing * 3) / Math.max(0.5, visualSettings.pointScale)));
   const yLimitM = Math.min(fieldSolve.grid.domainHeightM, fieldSolve.grid.substrateHeightM * visualSettings.volumeHeight);
   const maxDisplayMagnitudeVm = Math.max(fieldMagnitudePercentile(fieldSolve, 0.96), fieldSolve.field.maxElectricFieldVm * 0.18, 1);
   const positions: number[] = [];
@@ -370,8 +463,11 @@ function buildFieldCellGrid(
   const indices: number[] = [];
 
   for (let slice = 0; slice < lengthSlices; slice += 1) {
-    const xFraction = lengthSlices === 1 ? 0.5 : slice / (lengthSlices - 1);
-    const xM = trace.xM + trace.lengthM * xFraction;
+    const sliceStartFraction = slice / lengthSlices;
+    const sliceStopFraction = (slice + 1) / lengthSlices;
+    const x0M = trace.xM + trace.lengthM * sliceStartFraction;
+    const x1M = trace.xM + trace.lengthM * sliceStopFraction;
+    const xFraction = (sliceStartFraction + sliceStopFraction) / 2;
     const phase = xFraction * Math.PI * 2;
 
     for (let gy = 0; gy < fieldSolve.grid.cellsY - 1; gy += cellStride) {
@@ -390,21 +486,77 @@ function buildFieldCellGrid(
         if (weight < 0.035) continue;
 
         const cellRelevance = Math.min(1, Math.pow(weight, 0.62));
-        const vertexBase = positions.length / 3;
-        positions.push(
-          mToMm(xM), mToMm(y0M), mToMm(z0M),
-          mToMm(xM), mToMm(y1M), mToMm(z0M),
-          mToMm(xM), mToMm(y1M), mToMm(z1M),
-          mToMm(xM), mToMm(y0M), mToMm(z1M)
-        );
-        relevance.push(cellRelevance, cellRelevance, cellRelevance, cellRelevance);
-        phases.push(phase, phase, phase, phase);
-        indices.push(vertexBase, vertexBase + 1, vertexBase + 2, vertexBase, vertexBase + 2, vertexBase + 3);
+        pushFieldVoxel({
+          positions,
+          relevance,
+          phases,
+          indices,
+          x0M,
+          x1M,
+          y0M,
+          y1M,
+          z0M,
+          z1M,
+          cellRelevance,
+          phase
+        });
       }
     }
   }
 
   return { positions, relevance, phases, indices };
+}
+
+function pushFieldVoxel({
+  positions,
+  relevance,
+  phases,
+  indices,
+  x0M,
+  x1M,
+  y0M,
+  y1M,
+  z0M,
+  z1M,
+  cellRelevance,
+  phase
+}: {
+  positions: number[];
+  relevance: number[];
+  phases: number[];
+  indices: number[];
+  x0M: number;
+  x1M: number;
+  y0M: number;
+  y1M: number;
+  z0M: number;
+  z1M: number;
+  cellRelevance: number;
+  phase: number;
+}) {
+  const base = positions.length / 3;
+  positions.push(
+    mToMm(x0M), mToMm(y0M), mToMm(z0M),
+    mToMm(x1M), mToMm(y0M), mToMm(z0M),
+    mToMm(x1M), mToMm(y1M), mToMm(z0M),
+    mToMm(x0M), mToMm(y1M), mToMm(z0M),
+    mToMm(x0M), mToMm(y0M), mToMm(z1M),
+    mToMm(x1M), mToMm(y0M), mToMm(z1M),
+    mToMm(x1M), mToMm(y1M), mToMm(z1M),
+    mToMm(x0M), mToMm(y1M), mToMm(z1M)
+  );
+  for (let index = 0; index < 8; index += 1) {
+    relevance.push(cellRelevance);
+    phases.push(phase);
+  }
+  indices.push(
+    base, base + 1, base + 2, base, base + 2, base + 3,
+    base + 4, base + 6, base + 5, base + 4, base + 7, base + 6,
+    base, base + 4, base + 5, base, base + 5, base + 1,
+    base + 3, base + 2, base + 6, base + 3, base + 6, base + 7,
+    base + 1, base + 5, base + 6, base + 1, base + 6, base + 2,
+    base, base + 3, base + 7, base, base + 7, base + 4
+  );
 }
 
 function sampleFieldCell(fieldSolve: FieldSolverResult, xM: number, yM: number): number {
@@ -442,6 +594,95 @@ function fieldMagnitudePercentile(fieldSolve: FieldSolverResult, percentile: num
   values.sort((a, b) => a - b);
   const index = Math.max(0, Math.min(values.length - 1, Math.floor((values.length - 1) * percentile)));
   return values[index] ?? 1;
+}
+
+function buildCrossSectionCells(
+  fieldSolve: FieldSolverResult,
+  domainHeightM: number,
+  maxMagnitude: number
+) {
+  const cells: Array<{
+    id: string;
+    x0M: number;
+    x1M: number;
+    y0M: number;
+    y1M: number;
+    opacity: number;
+    color: string;
+  }> = [];
+  const strideX = Math.max(1, Math.round(fieldSolve.grid.cellsX / 48));
+  const strideY = Math.max(1, Math.round(fieldSolve.grid.cellsY / 32));
+
+  for (let y = 0; y < fieldSolve.grid.cellsY - 1; y += strideY) {
+    const y0M = y * fieldSolve.grid.dyM;
+    const y1M = Math.min(domainHeightM, (y + strideY) * fieldSolve.grid.dyM);
+    if (y0M >= domainHeightM) continue;
+
+    for (let x = 0; x < fieldSolve.grid.cellsX - 1; x += strideX) {
+      const x0M = x * fieldSolve.grid.dxM;
+      const x1M = Math.min(fieldSolve.grid.domainWidthM, (x + strideX) * fieldSolve.grid.dxM);
+      const field = sampleFieldCell(fieldSolve, (x0M + x1M) / 2, (y0M + y1M) / 2);
+      const relevance = Math.min(1, field / maxMagnitude) * microstripCellRegionWeight(fieldSolve, (x0M + x1M) / 2, (y0M + y1M) / 2);
+      if (relevance < 0.025) continue;
+      const warm = Math.min(255, Math.round(40 + relevance * 215));
+      const cool = Math.min(255, Math.round(120 + relevance * 105));
+      cells.push({
+        id: `${x}-${y}`,
+        x0M,
+        x1M,
+        y0M,
+        y1M,
+        opacity: 0.12 + Math.pow(relevance, 0.72) * 0.76,
+        color: relevance > 0.42 ? `rgb(${warm}, 80, 42)` : `rgb(42, ${cool}, 210)`
+      });
+    }
+  }
+
+  return cells;
+}
+
+function buildCrossSectionArrows(
+  fieldSolve: FieldSolverResult,
+  domainHeightM: number,
+  maxMagnitude: number
+) {
+  const arrows: Array<{
+    id: string;
+    xM: number;
+    yM: number;
+    dxM: number;
+    dyM: number;
+    strength: number;
+  }> = [];
+  const strideX = Math.max(3, Math.round(fieldSolve.grid.cellsX / 18));
+  const strideY = Math.max(3, Math.round(fieldSolve.grid.cellsY / 12));
+  const arrowLengthM = Math.min(fieldSolve.grid.domainWidthM, domainHeightM) * 0.045;
+
+  for (let y = 1; y < fieldSolve.grid.cellsY - 1; y += strideY) {
+    const yM = y * fieldSolve.grid.dyM;
+    if (yM >= domainHeightM) continue;
+
+    for (let x = 1; x < fieldSolve.grid.cellsX - 1; x += strideX) {
+      const xM = x * fieldSolve.grid.dxM;
+      const index = y * fieldSolve.grid.cellsX + x;
+      const ex = fieldSolve.field.electricFieldXVm[index] ?? 0;
+      const ey = fieldSolve.field.electricFieldYVm[index] ?? 0;
+      const magnitude = Math.hypot(ex, ey);
+      const relevance = Math.min(1, magnitude / maxMagnitude) * microstripCellRegionWeight(fieldSolve, xM, yM);
+      if (relevance < 0.1 || magnitude === 0) continue;
+
+      arrows.push({
+        id: `${x}-${y}`,
+        xM,
+        yM,
+        dxM: (ex / magnitude) * arrowLengthM * (0.55 + relevance),
+        dyM: (ey / magnitude) * arrowLengthM * (0.55 + relevance),
+        strength: Math.min(1, relevance)
+      });
+    }
+  }
+
+  return arrows;
 }
 
 const fieldCellVertexShader = `
