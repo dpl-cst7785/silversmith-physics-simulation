@@ -1,7 +1,17 @@
 import { OrbitControls, Text } from "@react-three/drei";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BufferGeometry, Color, Float32BufferAttribute, Mesh, MeshStandardMaterial, Uint16BufferAttribute } from "three";
+import {
+  BufferGeometry,
+  Color,
+  Float32BufferAttribute,
+  Group,
+  Mesh,
+  MeshStandardMaterial,
+  Quaternion,
+  Uint16BufferAttribute,
+  Vector3
+} from "three";
 import { mToMm, type RfGeometry } from "../../domain/geometry";
 import {
   buildConnectorProbeFrames,
@@ -132,26 +142,48 @@ function AnimatedFieldHeatmap({ samples }: { samples: FieldSample[] }) {
 
 function AnimatedFieldSample({ sample }: { sample: FieldSample }) {
   const meshRef = useRef<Mesh>(null);
-  const red = useMemo(() => new Color("#ef3b2d"), []);
-  const blue = useMemo(() => new Color("#2f6fed"), []);
+  const arrowRef = useRef<Group>(null);
+  const red = useMemo(() => new Color("#ff1f1f"), []);
+  const blue = useMemo(() => new Color("#1677ff"), []);
   const neutral = useMemo(() => new Color("#edf3f5"), []);
+  const direction = useMemo(() => new Vector3(sample.direction.x, sample.direction.y, sample.direction.z).normalize(), [sample]);
+  const reverseDirection = useMemo(() => direction.clone().multiplyScalar(-1), [direction]);
+  const up = useMemo(() => new Vector3(0, 1, 0), []);
 
   useFrame(({ clock }) => {
-    if (!meshRef.current) return;
+    if (!meshRef.current || !arrowRef.current) return;
     const value = sampleInstantaneousField(sample, clock.elapsedTime * Math.PI * 1.6);
     const magnitude = Math.min(1, Math.abs(value));
-    const material = meshRef.current.material as MeshStandardMaterial;
+    const sphereMaterial = meshRef.current.material as MeshStandardMaterial;
+    const arrowMesh = arrowRef.current.children[0] as Mesh;
+    const arrowMaterial = arrowMesh.material as MeshStandardMaterial;
     const color = value >= 0 ? red : blue;
-    meshRef.current.scale.setScalar(0.45 + magnitude * 0.75);
-    material.color.copy(neutral).lerp(color, magnitude);
-    material.opacity = 0.16 + magnitude * 0.72;
+    const signedDirection = value >= 0 ? direction : reverseDirection;
+    const orientation = new Quaternion().setFromUnitVectors(up, signedDirection);
+    meshRef.current.scale.setScalar(0.65 + magnitude * 1.05);
+    arrowRef.current.quaternion.copy(orientation);
+    arrowRef.current.scale.set(0.9, 0.65 + magnitude * 1.6, 0.9);
+    sphereMaterial.color.copy(neutral).lerp(color, magnitude);
+    sphereMaterial.emissive.copy(color).multiplyScalar(0.45 + magnitude * 1.35);
+    sphereMaterial.opacity = 0.28 + magnitude * 0.72;
+    arrowMaterial.color.copy(color);
+    arrowMaterial.emissive.copy(color).multiplyScalar(0.65 + magnitude * 1.55);
+    arrowMaterial.opacity = 0.35 + magnitude * 0.65;
   });
 
   return (
-    <mesh ref={meshRef} position={[mToMm(sample.xM), mToMm(sample.yM), mToMm(sample.zM)]}>
-      <sphereGeometry args={[0.28, 12, 12]} />
-      <meshStandardMaterial transparent opacity={0.35} depthWrite={false} />
-    </mesh>
+    <group position={[mToMm(sample.xM), mToMm(sample.yM), mToMm(sample.zM)]}>
+      <mesh ref={meshRef}>
+        <sphereGeometry args={[0.32, 14, 14]} />
+        <meshStandardMaterial transparent opacity={0.55} depthWrite={false} emissiveIntensity={1.2} />
+      </mesh>
+      <group ref={arrowRef}>
+        <mesh position={[0, 0.58, 0]}>
+          <coneGeometry args={[0.16, 0.78, 12]} />
+          <meshStandardMaterial transparent opacity={0.65} depthWrite={false} emissiveIntensity={1.4} />
+        </mesh>
+      </group>
+    </group>
   );
 }
 

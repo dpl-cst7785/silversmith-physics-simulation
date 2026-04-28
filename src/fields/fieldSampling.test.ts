@@ -21,11 +21,24 @@ describe("field sampling", () => {
     expect(samples[0].yM).toBeGreaterThan(geometry.stack.substrateHeightM);
     expect(samples[0].amplitude).toBeGreaterThan(0);
     expect(samples[0].amplitude).toBeLessThanOrEqual(1);
+    expect(Math.hypot(samples[0].direction.x, samples[0].direction.y, samples[0].direction.z)).toBeCloseTo(1);
+  });
+
+  it("uses a denser default field sample grid", () => {
+    expect(buildTraceFieldSamples(defaultGeometry(defaultSubstrate, copper))).toHaveLength(23 * 9 * 4);
   });
 
   it("samples signed instantaneous field values from phase", () => {
     const value = sampleInstantaneousField(
-      { id: "sample", xM: 0, yM: 0, zM: 0, amplitude: 0.5, phaseRad: Math.PI / 2 },
+      {
+        id: "sample",
+        xM: 0,
+        yM: 0,
+        zM: 0,
+        amplitude: 0.5,
+        phaseRad: Math.PI / 2,
+        direction: { x: 0, y: 1, z: 0 }
+      },
       Math.PI
     );
 

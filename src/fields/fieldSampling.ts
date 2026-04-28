@@ -7,6 +7,11 @@ export type FieldSample = {
   zM: number;
   amplitude: number;
   phaseRad: number;
+  direction: {
+    x: number;
+    y: number;
+    z: number;
+  };
 };
 
 export type ConnectorProbeFrame = {
@@ -29,9 +34,9 @@ export function buildTraceFieldSamples(
   const trace = geometry.traces[0];
   if (!trace) return [];
 
-  const samplesAlongTrace = options.samplesAlongTrace ?? 15;
-  const samplesAcrossTrace = options.samplesAcrossTrace ?? 7;
-  const heightLevels = options.heightLevels ?? 3;
+  const samplesAlongTrace = options.samplesAlongTrace ?? 23;
+  const samplesAcrossTrace = options.samplesAcrossTrace ?? 9;
+  const heightLevels = options.heightLevels ?? 4;
   const samples: FieldSample[] = [];
   const traceCenterZM = trace.yM + trace.widthM / 2;
   const fieldHalfWidthM = Math.max(trace.widthM * 2.5, geometry.stack.substrateHeightM);
@@ -57,7 +62,12 @@ export function buildTraceFieldSamples(
           yM,
           zM,
           amplitude,
-          phaseRad: xFraction * Math.PI * 2
+          phaseRad: xFraction * Math.PI * 2,
+          direction: normalizeDirection({
+            x: 0,
+            y: Math.max(yM - geometry.stack.substrateHeightM, geometry.stack.substrateHeightM * 0.2),
+            z: zOffsetM
+          })
         });
       }
     }
@@ -102,4 +112,13 @@ export function buildConnectorProbeFrames({
 
 function radiansToDegrees(value: number): number {
   return (value * 180) / Math.PI;
+}
+
+function normalizeDirection(vector: { x: number; y: number; z: number }): FieldSample["direction"] {
+  const length = Math.hypot(vector.x, vector.y, vector.z) || 1;
+  return {
+    x: vector.x / length,
+    y: vector.y / length,
+    z: vector.z / length
+  };
 }
