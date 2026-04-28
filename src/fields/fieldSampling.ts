@@ -13,6 +13,14 @@ export type FieldSample = {
     y: number;
     z: number;
   };
+  solverProbe?: FieldSampleProbe;
+};
+
+export type FieldSampleProbe = {
+  potentialV: number;
+  exVm: number;
+  eyVm: number;
+  magnitudeVm: number;
 };
 
 export type ConnectorProbeFrame = {
@@ -126,7 +134,13 @@ export function buildSolverFieldSamples(
             x: 0,
             y: field.eyVm,
             z: field.exVm
-          })
+          }),
+          solverProbe: {
+            potentialV: field.potentialV,
+            exVm: field.exVm,
+            eyVm: field.eyVm,
+            magnitudeVm: magnitude
+          }
         });
       }
     }
@@ -182,16 +196,20 @@ function normalizeDirection(vector: { x: number; y: number; z: number }): FieldS
   };
 }
 
-function sampleFieldGrid(
+export function sampleFieldGrid(
   fieldSolve: FieldSolverResult,
   xM: number,
   yM: number
-): { exVm: number; eyVm: number } {
+): FieldSampleProbe {
   const x = Math.max(0, Math.min(fieldSolve.grid.cellsX - 1, Math.round(xM / fieldSolve.grid.dxM)));
   const y = Math.max(0, Math.min(fieldSolve.grid.cellsY - 1, Math.round(yM / fieldSolve.grid.dyM)));
   const index = y * fieldSolve.grid.cellsX + x;
+  const exVm = fieldSolve.field.electricFieldXVm[index] ?? 0;
+  const eyVm = fieldSolve.field.electricFieldYVm[index] ?? 0;
   return {
-    exVm: fieldSolve.field.electricFieldXVm[index] ?? 0,
-    eyVm: fieldSolve.field.electricFieldYVm[index] ?? 0
+    potentialV: fieldSolve.field.potentialV[index] ?? 0,
+    exVm,
+    eyVm,
+    magnitudeVm: Math.hypot(exVm, eyVm)
   };
 }

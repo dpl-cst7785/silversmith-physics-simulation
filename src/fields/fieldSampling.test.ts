@@ -38,6 +38,7 @@ describe("field sampling", () => {
 
     expect(samples.length).toBeGreaterThan(0);
     expect(samples[0].amplitude).toBeGreaterThan(0);
+    expect(samples[0].solverProbe?.magnitudeVm).toBeGreaterThan(0);
     expect(Math.hypot(samples[0].direction.x, samples[0].direction.y, samples[0].direction.z)).toBeCloseTo(1);
   });
 

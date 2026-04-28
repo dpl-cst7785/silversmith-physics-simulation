@@ -23,6 +23,8 @@ import {
 } from "../../fields/fieldSampling";
 import { buildExtrudedGeometryMesh, type ExtrudedMeshSolid } from "../../geometry/extrudedMesh";
 import { getAnalyticalModelDescriptor, type AnalyticalModelId } from "../../physics/analyticalModels";
+import { buildFieldDiagnostics } from "../../simulation/fieldDiagnostics";
+import { solveMicrostripFiniteDifference, type FieldSolverOptions, type FieldSolverResult } from "../../simulation/finiteDifferenceMicrostrip";
 
 type Props = {
   geometry: RfGeometry;
@@ -33,8 +35,19 @@ export function ViewerRoute({ geometry, modelId }: Props) {
   const model = getAnalyticalModelDescriptor(modelId);
   const mesh = buildExtrudedGeometryMesh(geometry);
   const [fieldMode, setFieldMode] = useState<"solver" | "excitation">("solver");
+  const [fieldSettings, setFieldSettings] = useState<Required<Pick<FieldSolverOptions, "cellsX" | "cellsY" | "maxIterations" | "tolerance">>>({
+    cellsX: 64,
+    cellsY: 48,
+    maxIterations: 7_000,
+    tolerance: 8e-5
+  });
+  const [selectedSample, setSelectedSample] = useState<FieldSample | null>(null);
   const [probeFrames, setProbeFrames] = useState<ConnectorProbeFrame[]>(() =>
     buildConnectorProbeFrames({ geometry, animationPhaseRad: 0 })
+  );
+  const fieldSolve = useMemo(
+    () => solveMicrostripFiniteDifference(geometry, fieldSettings),
+    [fieldSettings, geometry]
   );
 
   useEffect(() => {
@@ -80,15 +93,29 @@ export function ViewerRoute({ geometry, modelId }: Props) {
           </button>
         </div>
       </div>
+      <FieldSolverControls settings={fieldSettings} onSettingsChange={setFieldSettings} />
       <div className="viewer-shell">
         <Canvas camera={{ position: [34, 28, 46], fov: 38 }}>
           <color attach="background" args={["#eef4f1"]} />
           <ambientLight intensity={0.7} />
           <directionalLight position={[12, 20, 10]} intensity={1.2} />
-          <ExtrudedMeshScene geometry={geometry} solids={mesh.solids} modelId={modelId} fieldMode={fieldMode} />
+          <ExtrudedMeshScene
+            geometry={geometry}
+            solids={mesh.solids}
+            modelId={modelId}
+            fieldMode={fieldMode}
+            fieldSolve={fieldSolve}
+            onSelectSample={setSelectedSample}
+          />
           <OrbitControls makeDefault enableDamping />
         </Canvas>
       </div>
+      <FieldDiagnosticsPanel
+        fieldSolve={fieldSolve}
+        selectedSample={selectedSample}
+        onExport={() => exportFieldSnapshot({ geometry, fieldSolve })}
+      />
+      <RefinementSuggestionsPanel fieldSolve={fieldSolve} />
       <ConnectorTerminal frames={probeFrames} />
     </section>
   );
@@ -98,12 +125,16 @@ function ExtrudedMeshScene({
   geometry,
   solids,
   modelId,
-  fieldMode
+  fieldMode,
+  fieldSolve,
+  onSelectSample
 }: {
   geometry: RfGeometry;
   solids: ExtrudedMeshSolid[];
   modelId: AnalyticalModelId;
   fieldMode: "solver" | "excitation";
+  fieldSolve: FieldSolverResult;
+  onSelectSample: (sample: FieldSample) => void;
 }) {
   const boardLengthMm = mToMm(geometry.boardLengthM);
   const substrateHeightMm = mToMm(geometry.stack.substrateHeightM);
@@ -111,8 +142,8 @@ function ExtrudedMeshScene({
   const trace = geometry.traces[0];
   const model = getAnalyticalModelDescriptor(modelId);
   const fieldSamples = useMemo(
-    () => fieldMode === "solver" ? buildSolverFieldSamples(geometry) : buildTraceFieldSamples(geometry),
-    [fieldMode, geometry]
+    () => fieldMode === "solver" ? buildSolverFieldSamples(geometry, fieldSolve) : buildTraceFieldSamples(geometry),
+    [fieldMode, fieldSolve, geometry]
   );
 
   return (
@@ -120,7 +151,7 @@ function ExtrudedMeshScene({
       {solids.map((solid) => (
         <MeshSolid key={solid.id} solid={solid} />
       ))}
-      <AnimatedFieldHeatmap samples={fieldSamples} />
+      <AnimatedFieldHeatmap samples={fieldSamples} onSelectSample={onSelectSample} />
       {trace && (
         <>
           <DimensionLabel
@@ -152,17 +183,29 @@ function ExtrudedMeshScene({
   );
 }
 
-function AnimatedFieldHeatmap({ samples }: { samples: FieldSample[] }) {
+function AnimatedFieldHeatmap({
+  samples,
+  onSelectSample
+}: {
+  samples: FieldSample[];
+  onSelectSample: (sample: FieldSample) => void;
+}) {
   return (
     <group>
       {samples.map((sample) => (
-        <AnimatedFieldSample key={sample.id} sample={sample} />
+        <AnimatedFieldSample key={sample.id} sample={sample} onSelectSample={onSelectSample} />
       ))}
     </group>
   );
 }
 
-function AnimatedFieldSample({ sample }: { sample: FieldSample }) {
+function AnimatedFieldSample({
+  sample,
+  onSelectSample
+}: {
+  sample: FieldSample;
+  onSelectSample: (sample: FieldSample) => void;
+}) {
   const meshRef = useRef<Mesh>(null);
   const arrowRef = useRef<Group>(null);
   const red = useMemo(() => new Color("#ff1f1f"), []);
@@ -200,12 +243,161 @@ function AnimatedFieldSample({ sample }: { sample: FieldSample }) {
         <meshStandardMaterial transparent opacity={0.55} depthWrite={false} emissiveIntensity={1.2} />
       </mesh>
       <group ref={arrowRef}>
-        <mesh position={[0, 0.58, 0]}>
+        <mesh
+          position={[0, 0.58, 0]}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onSelectSample(sample);
+          }}
+        >
           <coneGeometry args={[0.16, 0.78, 12]} />
           <meshStandardMaterial transparent opacity={0.65} depthWrite={false} emissiveIntensity={1.4} />
         </mesh>
       </group>
     </group>
+  );
+}
+
+function FieldSolverControls({
+  settings,
+  onSettingsChange
+}: {
+  settings: Required<Pick<FieldSolverOptions, "cellsX" | "cellsY" | "maxIterations" | "tolerance">>;
+  onSettingsChange: (settings: Required<Pick<FieldSolverOptions, "cellsX" | "cellsY" | "maxIterations" | "tolerance">>) => void;
+}) {
+  return (
+    <div className="field-controls">
+      <label>
+        <span>Cells X</span>
+        <input
+          type="number"
+          min={24}
+          max={128}
+          step={4}
+          value={settings.cellsX}
+          onChange={(event) => onSettingsChange({ ...settings, cellsX: Number(event.target.value) })}
+        />
+      </label>
+      <label>
+        <span>Cells Y</span>
+        <input
+          type="number"
+          min={24}
+          max={96}
+          step={4}
+          value={settings.cellsY}
+          onChange={(event) => onSettingsChange({ ...settings, cellsY: Number(event.target.value) })}
+        />
+      </label>
+      <label>
+        <span>Max iterations</span>
+        <input
+          type="number"
+          min={500}
+          max={20000}
+          step={500}
+          value={settings.maxIterations}
+          onChange={(event) => onSettingsChange({ ...settings, maxIterations: Number(event.target.value) })}
+        />
+      </label>
+      <label>
+        <span>Tolerance</span>
+        <input
+          type="number"
+          min={0.00001}
+          max={0.001}
+          step={0.00001}
+          value={settings.tolerance}
+          onChange={(event) => onSettingsChange({ ...settings, tolerance: Number(event.target.value) })}
+        />
+      </label>
+    </div>
+  );
+}
+
+function FieldDiagnosticsPanel({
+  fieldSolve,
+  selectedSample,
+  onExport
+}: {
+  fieldSolve: FieldSolverResult;
+  selectedSample: FieldSample | null;
+  onExport: () => void;
+}) {
+  const residualStart = fieldSolve.residualHistory[0] ?? fieldSolve.residual;
+  return (
+    <div className="table-section">
+      <div className="section-heading-row">
+        <h2>Solver field diagnostics</h2>
+        <button className="secondary-button" onClick={onExport}>Export field snapshot</button>
+      </div>
+      <div className="run-summary">
+        <span>Status: {fieldSolve.converged ? "converged" : "not converged"}</span>
+        <span>Iterations: {fieldSolve.iterations}</span>
+        <span>Residual: {fieldSolve.residual.toExponential(2)}</span>
+        <span>Max |E|: {fieldSolve.field.maxElectricFieldVm.toFixed(1)} V/m</span>
+        <span>Hotspot: {mToMm(fieldSolve.field.hotspot.xM).toFixed(2)} mm, {mToMm(fieldSolve.field.hotspot.yM).toFixed(2)} mm</span>
+        <span>Residual drop: {residualStart === 0 ? "n/a" : `${(fieldSolve.residual / residualStart).toExponential(2)}x`}</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Probe</th>
+            <th>V</th>
+            <th>Ex</th>
+            <th>Ey</th>
+            <th>|E|</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Hotspot</td>
+            <td>{fieldSolve.field.hotspot.potentialV.toFixed(4)} V</td>
+            <td>{fieldSolve.field.hotspot.exVm.toFixed(1)} V/m</td>
+            <td>{fieldSolve.field.hotspot.eyVm.toFixed(1)} V/m</td>
+            <td>{fieldSolve.field.hotspot.magnitudeVm.toFixed(1)} V/m</td>
+          </tr>
+          {selectedSample?.solverProbe && (
+            <tr>
+              <td>Selected sample</td>
+              <td>{selectedSample.solverProbe.potentialV.toFixed(4)} V</td>
+              <td>{selectedSample.solverProbe.exVm.toFixed(1)} V/m</td>
+              <td>{selectedSample.solverProbe.eyVm.toFixed(1)} V/m</td>
+              <td>{selectedSample.solverProbe.magnitudeVm.toFixed(1)} V/m</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RefinementSuggestionsPanel({ fieldSolve }: { fieldSolve: FieldSolverResult }) {
+  const diagnostics = buildFieldDiagnostics(fieldSolve);
+  return (
+    <div className="table-section">
+      <h2>Refinement suggestions</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Region</th>
+            <th>Priority</th>
+            <th>Location</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {diagnostics.refinementSuggestions.map((suggestion) => (
+            <tr key={suggestion.id}>
+              <td>{suggestion.label}</td>
+              <td>{suggestion.priority}</td>
+              <td>{mToMm(suggestion.xM).toFixed(2)} mm, {mToMm(suggestion.yM).toFixed(2)} mm</td>
+              <td>{suggestion.reason}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -271,6 +463,29 @@ function ConnectorTerminal({ frames }: { frames: ConnectorProbeFrame[] }) {
       </p>
     </div>
   );
+}
+
+function exportFieldSnapshot({
+  geometry,
+  fieldSolve
+}: {
+  geometry: RfGeometry;
+  fieldSolve: FieldSolverResult;
+}) {
+  const snapshot = {
+    schemaVersion: "field-snapshot.v1",
+    generatedAt: new Date().toISOString(),
+    geometry,
+    fieldSolve
+  };
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" })
+  );
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `field-snapshot-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 function solidToBufferGeometry(solid: ExtrudedMeshSolid): BufferGeometry {

@@ -19,12 +19,21 @@ export type FieldSolverResult = {
   airCapacitancePerMeterFPerM: number;
   iterations: number;
   residual: number;
+  residualHistory: number[];
   converged: boolean;
   field: {
     potentialV: number[];
     electricFieldXVm: number[];
     electricFieldYVm: number[];
     maxElectricFieldVm: number;
+    hotspot: {
+      xM: number;
+      yM: number;
+      magnitudeVm: number;
+      potentialV: number;
+      exVm: number;
+      eyVm: number;
+    };
   };
   grid: {
     cellsX: number;
@@ -44,6 +53,7 @@ type SolveResult = {
   capacitancePerMeterFPerM: number;
   iterations: number;
   residual: number;
+  residualHistory: number[];
   converged: boolean;
 };
 
@@ -97,6 +107,7 @@ export function solveMicrostripFiniteDifference(
     airCapacitancePerMeterFPerM: airSolve.capacitancePerMeterFPerM,
     iterations: Math.max(dielectricSolve.iterations, airSolve.iterations),
     residual: Math.max(dielectricSolve.residual, airSolve.residual),
+    residualHistory: dielectricSolve.residualHistory,
     converged: dielectricSolve.converged && airSolve.converged,
     field: buildFieldGrid(config, dielectricSolve.potential),
     grid: {
@@ -119,6 +130,7 @@ function buildFieldGrid(config: SolverConfig, potential: Float64Array): FieldSol
   const dx = config.boardWidthM / (config.cellsX - 1);
   const dy = config.domainHeightM / (config.cellsY - 1);
   let maxElectricFieldVm = 0;
+  let hotspotIndex = 0;
 
   for (let y = 0; y < config.cellsY; y += 1) {
     for (let x = 0; x < config.cellsX; x += 1) {
@@ -131,15 +143,29 @@ function buildFieldGrid(config: SolverConfig, potential: Float64Array): FieldSol
       const index = gridIndex(x, y, config.cellsX);
       electricFieldXVm[index] = ex;
       electricFieldYVm[index] = ey;
-      maxElectricFieldVm = Math.max(maxElectricFieldVm, Math.hypot(ex, ey));
+      const magnitude = Math.hypot(ex, ey);
+      if (magnitude > maxElectricFieldVm) {
+        maxElectricFieldVm = magnitude;
+        hotspotIndex = index;
+      }
     }
   }
+  const hotspotX = hotspotIndex % config.cellsX;
+  const hotspotY = Math.floor(hotspotIndex / config.cellsX);
 
   return {
     potentialV: Array.from(potential),
     electricFieldXVm,
     electricFieldYVm,
-    maxElectricFieldVm
+    maxElectricFieldVm,
+    hotspot: {
+      xM: xCoordinate(config, hotspotX),
+      yM: yCoordinate(config, hotspotY),
+      magnitudeVm: maxElectricFieldVm,
+      potentialV: potential[hotspotIndex] ?? 0,
+      exVm: electricFieldXVm[hotspotIndex] ?? 0,
+      eyVm: electricFieldYVm[hotspotIndex] ?? 0
+    }
   };
 }
 
@@ -151,6 +177,7 @@ function solvePotential(config: SolverConfig, substrateRelativePermittivity: num
 
   let residual = Number.POSITIVE_INFINITY;
   let iterations = 0;
+  const residualHistory: number[] = [];
 
   for (iterations = 0; iterations < maxIterations; iterations += 1) {
     residual = 0;
@@ -178,6 +205,9 @@ function solvePotential(config: SolverConfig, substrateRelativePermittivity: num
     }
 
     applyNeumannEdges(config, potential, fixed);
+    if (iterations % 100 === 0 || residual < tolerance) {
+      residualHistory.push(residual);
+    }
     if (residual < tolerance) break;
   }
 
@@ -186,6 +216,7 @@ function solvePotential(config: SolverConfig, substrateRelativePermittivity: num
     capacitancePerMeterFPerM: calculateTraceChargeCapacitancePerMeter(config, potential, fixed, substrateRelativePermittivity),
     iterations: iterations + 1,
     residual,
+    residualHistory,
     converged: residual < tolerance
   };
 }

@@ -37,6 +37,8 @@ describe("finite-difference microstrip field solver", () => {
     expect(numerical.field.potentialV).toHaveLength(numerical.grid.cellsX * numerical.grid.cellsY);
     expect(numerical.field.electricFieldXVm).toHaveLength(numerical.field.potentialV.length);
     expect(numerical.field.maxElectricFieldVm).toBeGreaterThan(0);
+    expect(numerical.field.hotspot.magnitudeVm).toBe(numerical.field.maxElectricFieldVm);
+    expect(numerical.residualHistory.length).toBeGreaterThan(0);
     expect(numerical.grid.traceMinXM).toBe(geometry.traces[0].yM);
   });
 
