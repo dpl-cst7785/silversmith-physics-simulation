@@ -243,7 +243,7 @@ export function buildSolverFieldVolume(
   const heightLevels = options.heightLevels ?? 18;
   const lengthM = options.lengthM ?? fieldSolve.grid.domainWidthM;
   const xOffsetM = options.xOffsetM ?? 0;
-  const minNormalizedMagnitude = options.minNormalizedMagnitude ?? 0.09;
+  const minNormalizedMagnitude = options.minNormalizedMagnitude ?? 0.045;
   const maxMagnitudeVm = Math.max(fieldSolve.field.maxElectricFieldVm, 1);
   const displayMagnitudeVm = Math.max(percentileMagnitude(fieldSolve, 0.96), maxMagnitudeVm * 0.18, 1);
   const positions: number[] = [];
@@ -271,12 +271,14 @@ export function buildSolverFieldVolume(
         const yM = yStopM * yFraction;
         const field = sampleFieldGrid(fieldSolve, crossSectionXM, yM);
         const normalized = Math.min(1, field.magnitudeVm / displayMagnitudeVm);
-        if (normalized < minNormalizedMagnitude) continue;
+        const physicalWeight = microstripFieldRegionWeight(fieldSolve, crossSectionXM, yM);
+        const weighted = normalized * physicalWeight;
+        if (weighted < minNormalizedMagnitude) continue;
 
         const densityGate = deterministicUnit(ix, iy, iz, 3);
-        if (densityGate > Math.pow(normalized, 0.72)) continue;
+        if (densityGate > Math.pow(weighted, 0.58)) continue;
 
-        const softened = Math.sqrt(normalized);
+        const softened = Math.sqrt(weighted);
         const sign = field.eyVm >= 0 ? 1 : -1;
         positions.push(
           xM + deterministicJitter(ix, iy, iz, 0) * lengthM * 0.003 * spacingMultiplier,
@@ -318,8 +320,8 @@ export function buildPowerFlowSamples(
   const trace = geometry.traces[0];
   if (!trace) return [];
 
-  const samplesAlongTrace = options.samplesAlongTrace ?? 34;
-  const lanes = options.lanes ?? 3;
+  const samplesAlongTrace = options.samplesAlongTrace ?? 20;
+  const lanes = options.lanes ?? 2;
   const centerZM = trace.yM + trace.widthM / 2;
   const laneSpacingM = trace.widthM * 0.36;
   const yM = geometry.stack.substrateHeightM + geometry.stack.substrateHeightM * 0.2;
@@ -425,6 +427,25 @@ function deterministicJitter(ix: number, iy: number, iz: number, salt: number): 
 function deterministicUnit(ix: number, iy: number, iz: number, salt: number): number {
   const value = Math.sin((ix + 1) * 12.9898 + (iy + 1) * 78.233 + (iz + 1) * 37.719 + salt * 19.19);
   return value - Math.floor(value);
+}
+
+function microstripFieldRegionWeight(fieldSolve: FieldSolverResult, crossSectionXM: number, yM: number): number {
+  const traceMin = fieldSolve.grid.traceMinXM;
+  const traceMax = fieldSolve.grid.traceMaxXM;
+  const traceWidth = Math.max(traceMax - traceMin, fieldSolve.grid.dxM);
+  const substrateHeight = fieldSolve.grid.substrateHeightM;
+  const insideTraceProjection = crossSectionXM >= traceMin && crossSectionXM <= traceMax;
+  const distanceToTrace = insideTraceProjection
+    ? 0
+    : Math.min(Math.abs(crossSectionXM - traceMin), Math.abs(crossSectionXM - traceMax));
+  const distanceToEdge = Math.min(Math.abs(crossSectionXM - traceMin), Math.abs(crossSectionXM - traceMax));
+  const belowOrNearTrace = yM <= substrateHeight * 1.12;
+  const underTraceWeight = insideTraceProjection && belowOrNearTrace ? 1 : 0;
+  const edgeFringeWeight = Math.exp(-distanceToEdge / (traceWidth * 0.42));
+  const lateralDecay = Math.exp(-distanceToTrace / (traceWidth * 1.25));
+  const airDecay = yM <= substrateHeight ? 1 : Math.exp(-(yM - substrateHeight) / (substrateHeight * 0.32));
+  const substrateBias = yM <= substrateHeight ? 1 : 0.38;
+  return Math.min(1, Math.max(underTraceWeight, edgeFringeWeight * 0.95, lateralDecay * 0.35) * airDecay * substrateBias);
 }
 
 function percentileMagnitude(fieldSolve: FieldSolverResult, percentile: number): number {

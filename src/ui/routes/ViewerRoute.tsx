@@ -57,11 +57,11 @@ export function ViewerRoute({ geometry, modelId }: Props) {
     tolerance: 8e-5
   });
   const [fieldVisualSettings, setFieldVisualSettings] = useState<FieldVisualSettings>({
-    opacity: 0.72,
-    pointScale: 1,
-    spacing: 1,
-    volumeHeight: 1.8,
-    powerFlow: true
+    opacity: 0.95,
+    pointScale: 1.35,
+    spacing: 0.75,
+    volumeHeight: 1.35,
+    powerFlow: false
   });
   const [selectedSample, setSelectedSample] = useState<FieldSample | null>(null);
   const [probeFrames, setProbeFrames] = useState<ConnectorProbeFrame[]>(() =>
@@ -403,7 +403,7 @@ const fieldVolumeFragmentShader = `
     vec3 blue = vec3(0.05, 0.42, 1.0);
     vec3 fluidColor = mix(blue, red, wave);
     vec3 color = mix(vColor, fluidColor, 0.82);
-    float alpha = opacityScale * (softDisc * (0.045 + vAmplitude * 0.18) + core * vAmplitude * 0.08);
+    float alpha = opacityScale * (softDisc * (0.035 + vAmplitude * 0.14) + core * vAmplitude * 0.06);
     gl_FragColor = vec4(color, alpha);
   }
 `;
@@ -427,15 +427,15 @@ function PowerFlowParticle({ sample }: { sample: PowerFlowSample }) {
     const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * Math.PI * 2.2 - sample.phaseRad);
     const material = meshRef.current.material as MeshStandardMaterial;
     meshRef.current.position.x = mToMm(sample.xM) + ((clock.elapsedTime * 8 + sample.phaseRad * 1.6) % mToMm(0.004));
-    meshRef.current.scale.set(0.8 + pulse * 0.9, 0.8 + pulse * 0.3, 0.8 + pulse * 0.3);
-    material.opacity = 0.18 + pulse * 0.62 * sample.amplitude;
-    material.emissive.copy(color).multiplyScalar(0.6 + pulse * 1.2);
+    meshRef.current.scale.set(0.52 + pulse * 0.48, 0.52 + pulse * 0.18, 0.52 + pulse * 0.18);
+    material.opacity = 0.08 + pulse * 0.34 * sample.amplitude;
+    material.emissive.copy(color).multiplyScalar(0.32 + pulse * 0.62);
   });
 
   return (
     <mesh ref={meshRef} position={[mToMm(sample.xM), mToMm(sample.yM), mToMm(sample.zM)]} rotation={[0, 0, -Math.PI / 2]}>
-      <coneGeometry args={[0.16, 0.72, 12]} />
-      <meshStandardMaterial color="#ffd45a" emissive="#ffd45a" transparent opacity={0.45} depthWrite={false} />
+      <coneGeometry args={[0.1, 0.44, 12]} />
+      <meshStandardMaterial color="#ffd45a" emissive="#ffd45a" transparent opacity={0.22} depthWrite={false} />
     </mesh>
   );
 }
@@ -588,7 +588,7 @@ function FieldVisualControls({
         </div>
         <button
           className="secondary-button"
-          onClick={() => onSettingsChange({ opacity: 0.72, pointScale: 1, spacing: 1, volumeHeight: 1.8, powerFlow: true })}
+          onClick={() => onSettingsChange({ opacity: 0.95, pointScale: 1.35, spacing: 0.75, volumeHeight: 1.35, powerFlow: false })}
         >
           Reset visual defaults
         </button>
