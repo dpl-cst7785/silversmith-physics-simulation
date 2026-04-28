@@ -32,7 +32,24 @@ describe("extruded geometry mesh", () => {
 
     expect(trace?.metadata.widthM).toBe(mmToM(2.8));
     expect(trace?.metadata.lengthM).toBe(mmToM(25));
-    expect(trace?.vertices[1].xM).toBeCloseTo(geometry.traces[0].xM + mmToM(25));
+    expect(trace?.vertices[4].xM).toBeCloseTo(geometry.traces[0].xM + mmToM(25));
     expect(trace?.vertices[4].zM).toBeCloseTo(geometry.traces[0].yM + mmToM(2.8));
+  });
+
+  it("extrudes a path-aware curved trace as a connected conductor mesh", () => {
+    const geometry = defaultGeometry(defaultSubstrate, copper);
+    geometry.traces[0].centerline = [
+      { xM: mmToM(4), yM: mmToM(7.8) },
+      { xM: mmToM(17), yM: mmToM(7.8) },
+      { xM: mmToM(21), yM: mmToM(13.2) },
+      { xM: mmToM(30), yM: mmToM(13.2) }
+    ];
+
+    const mesh = buildExtrudedGeometryMesh(geometry);
+    const trace = mesh.solids.find((solid) => solid.kind === "trace");
+
+    expect(trace?.vertices).toHaveLength(geometry.traces[0].centerline.length * 4);
+    expect(trace?.faces.length).toBeGreaterThan(6);
+    expect(trace?.metadata.centerlinePoints).toBe(4);
   });
 });

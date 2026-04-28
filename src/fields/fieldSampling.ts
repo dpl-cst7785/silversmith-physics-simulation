@@ -1,4 +1,4 @@
-import type { RfGeometry } from "../domain/geometry";
+import { getTraceCenterline, samplePolylineAtFraction, type RfGeometry } from "../domain/geometry";
 import { solveMicrostripFiniteDifference, type FieldSolverResult } from "../simulation/finiteDifferenceMicrostrip";
 
 export type FieldSample = {
@@ -58,6 +58,16 @@ export type PowerFlowSample = {
   phaseRad: number;
 };
 
+export type PowerFlowStreamline = {
+  id: string;
+  points: Array<{ xM: number; yM: number; zM: number }>;
+  normalizedPowerDensity: number;
+  electricFieldVm: number;
+  poyntingWPerM2: number;
+  etaEffectiveOhms: number;
+  phaseRad: number;
+};
+
 export function buildTraceFieldSamples(
   geometry: RfGeometry,
   options: {
@@ -73,17 +83,17 @@ export function buildTraceFieldSamples(
   const samplesAcrossTrace = options.samplesAcrossTrace ?? 9;
   const heightLevels = options.heightLevels ?? 4;
   const samples: FieldSample[] = [];
-  const traceCenterZM = trace.yM + trace.widthM / 2;
   const fieldHalfWidthM = Math.max(trace.widthM * 2.5, geometry.stack.substrateHeightM);
   const maxHeightM = geometry.stack.substrateHeightM * 1.8;
+  const centerline = getTraceCenterline(trace);
 
   for (let ix = 0; ix < samplesAlongTrace; ix += 1) {
     const xFraction = samplesAlongTrace === 1 ? 0.5 : ix / (samplesAlongTrace - 1);
-    const xM = trace.xM + trace.lengthM * xFraction;
+    const pathPoint = samplePolylineAtFraction(centerline, xFraction);
     for (let iz = 0; iz < samplesAcrossTrace; iz += 1) {
       const zFraction = samplesAcrossTrace === 1 ? 0.5 : iz / (samplesAcrossTrace - 1);
       const zOffsetM = (zFraction - 0.5) * fieldHalfWidthM * 2;
-      const zM = traceCenterZM + zOffsetM;
+      const zM = pathPoint.yM + zOffsetM;
       for (let iy = 0; iy < heightLevels; iy += 1) {
         const yFraction = (iy + 1) / heightLevels;
         const yM = geometry.stack.substrateHeightM + yFraction * maxHeightM;
@@ -93,7 +103,7 @@ export function buildTraceFieldSamples(
 
         samples.push({
           id: `field-${ix}-${iz}-${iy}`,
-          xM,
+          xM: pathPoint.xM,
           yM,
           zM,
           amplitude,
@@ -138,7 +148,7 @@ export function buildSolverFieldSamples(
 
   for (let ix = 0; ix < samplesAlongTrace; ix += 1) {
     const xFraction = samplesAlongTrace === 1 ? 0.5 : ix / (samplesAlongTrace - 1);
-    const traceXM = trace.xM + trace.lengthM * xFraction;
+    const tracePoint = samplePolylineAtFraction(getTraceCenterline(trace), xFraction);
     for (let iz = 0; iz < samplesAcrossSection; iz += 1) {
       const zFraction = samplesAcrossSection === 1 ? 0.5 : iz / (samplesAcrossSection - 1);
       const crossSectionXM = zFraction * fieldSolve.grid.domainWidthM;
@@ -151,7 +161,7 @@ export function buildSolverFieldSamples(
 
         samples.push({
           id: `solver-field-${ix}-${iz}-${iy}`,
-          xM: traceXM,
+          xM: tracePoint.xM,
           yM,
           zM: crossSectionXM,
           amplitude: Math.min(1, magnitude / maxField),
@@ -322,7 +332,6 @@ export function buildPowerFlowSamples(
 
   const samplesAlongTrace = options.samplesAlongTrace ?? 20;
   const lanes = options.lanes ?? 2;
-  const centerZM = trace.yM + trace.widthM / 2;
   const laneSpacingM = trace.widthM * 0.36;
   const yM = geometry.stack.substrateHeightM + geometry.stack.substrateHeightM * 0.2;
   const samples: PowerFlowSample[] = [];
@@ -332,10 +341,11 @@ export function buildPowerFlowSamples(
     const laneOffsetM = (laneFraction - 0.5) * laneSpacingM * (lanes - 1);
     for (let ix = 0; ix < samplesAlongTrace; ix += 1) {
       const xFraction = samplesAlongTrace === 1 ? 0.5 : ix / (samplesAlongTrace - 1);
+      const pathPoint = samplePolylineAtFraction(getTraceCenterline(trace), xFraction);
       samples.push({
-        xM: trace.xM + trace.lengthM * xFraction,
+        xM: pathPoint.xM,
         yM,
-        zM: centerZM + laneOffsetM,
+        zM: pathPoint.yM + laneOffsetM,
         amplitude: 1 - Math.abs(laneFraction - 0.5) * 0.22,
         phaseRad: xFraction * Math.PI * 2 + lane * 0.24
       });
@@ -343,6 +353,86 @@ export function buildPowerFlowSamples(
   }
 
   return samples;
+}
+
+export function buildPoyntingFlowStreamlines(
+  geometry: RfGeometry,
+  fieldSolve: FieldSolverResult,
+  options: {
+    streamlineCount?: number;
+    pointsAlongTrace?: number;
+    crossSectionSamplesX?: number;
+    crossSectionSamplesY?: number;
+    minNormalizedPower?: number;
+  } = {}
+): PowerFlowStreamline[] {
+  const trace = geometry.traces[0];
+  if (!trace) return [];
+
+  const streamlineCount = options.streamlineCount ?? 18;
+  const pointsAlongTrace = options.pointsAlongTrace ?? 44;
+  const crossSectionSamplesX = options.crossSectionSamplesX ?? 30;
+  const crossSectionSamplesY = options.crossSectionSamplesY ?? 14;
+  const minNormalizedPower = options.minNormalizedPower ?? 0.04;
+  const effectiveRelativePermittivity = estimateEffectiveRelativePermittivity(geometry);
+  const etaEffectiveOhms = 376.730313668 / Math.sqrt(effectiveRelativePermittivity);
+  const displayMagnitudeVm = Math.max(percentileMagnitude(fieldSolve, 0.96), fieldSolve.field.maxElectricFieldVm * 0.18, 1);
+  const yStopM = Math.min(fieldSolve.grid.domainHeightM, fieldSolve.grid.substrateHeightM * 1.35);
+
+  const candidates: Array<{
+    zM: number;
+    yM: number;
+    normalizedPowerDensity: number;
+    electricFieldVm: number;
+    poyntingWPerM2: number;
+  }> = [];
+
+  for (let iy = 0; iy < crossSectionSamplesY; iy += 1) {
+    const yFraction = crossSectionSamplesY === 1 ? 0.5 : iy / (crossSectionSamplesY - 1);
+    const yM = yStopM * yFraction;
+
+    for (let iz = 0; iz < crossSectionSamplesX; iz += 1) {
+      const zFraction = crossSectionSamplesX === 1 ? 0.5 : iz / (crossSectionSamplesX - 1);
+      const zM = fieldSolve.grid.domainWidthM * zFraction;
+      const field = sampleFieldGrid(fieldSolve, zM, yM);
+      const regionWeight = microstripFieldRegionWeight(fieldSolve, zM, yM);
+      const normalizedField = Math.min(1, field.magnitudeVm / displayMagnitudeVm);
+      // For a forward quasi-TEM wave, time-average Poynting density is proportional to |E_t|^2 / eta_eff.
+      const normalizedPowerDensity = normalizedField * normalizedField * regionWeight;
+      if (normalizedPowerDensity < minNormalizedPower) continue;
+
+      candidates.push({
+        zM,
+        yM,
+        normalizedPowerDensity,
+        electricFieldVm: field.magnitudeVm,
+        poyntingWPerM2: (field.magnitudeVm * field.magnitudeVm) / Math.max(etaEffectiveOhms, 1e-9)
+      });
+    }
+  }
+
+  candidates.sort((a, b) => b.normalizedPowerDensity - a.normalizedPowerDensity);
+
+  const selected: typeof candidates = [];
+  const minDistanceM = Math.max(trace.widthM * 0.18, fieldSolve.grid.dxM * 1.6);
+  for (const candidate of candidates) {
+    const hasNearby = selected.some((existing) =>
+      Math.hypot(existing.zM - candidate.zM, existing.yM - candidate.yM) < minDistanceM
+    );
+    if (hasNearby) continue;
+    selected.push(candidate);
+    if (selected.length >= streamlineCount) break;
+  }
+
+  return selected.map((candidate, index) => ({
+    id: `poynting-${index}`,
+    points: buildTracePathPoints(trace, candidate.zM, candidate.yM, pointsAlongTrace),
+    normalizedPowerDensity: Math.min(1, candidate.normalizedPowerDensity),
+    electricFieldVm: candidate.electricFieldVm,
+    poyntingWPerM2: candidate.poyntingWPerM2,
+    etaEffectiveOhms,
+    phaseRad: index * 0.37
+  }));
 }
 
 export function sampleInstantaneousField(sample: FieldSample, animationPhaseRad: number): number {
@@ -418,6 +508,39 @@ function fieldColor(normalized: number, sign: number): [number, number, number] 
   const base = 0.08 + normalized * 0.18;
   if (sign >= 0) return [Math.min(1, base + normalized * 0.82), base * 0.55, base * 0.62];
   return [base * 0.55, base * 0.75, Math.min(1, base + normalized * 0.82)];
+}
+
+function buildTracePathPoints(
+  trace: NonNullable<RfGeometry["traces"][number]>,
+  zM: number,
+  yM: number,
+  pointsAlongTrace: number
+): Array<{ xM: number; yM: number; zM: number }> {
+  const points: Array<{ xM: number; yM: number; zM: number }> = [];
+  const centerline = getTraceCenterline(trace);
+  const traceCenterYM = trace.yM + trace.widthM / 2;
+  const lateralOffsetM = zM - traceCenterYM;
+  for (let index = 0; index < pointsAlongTrace; index += 1) {
+    const fraction = pointsAlongTrace === 1 ? 0.5 : index / (pointsAlongTrace - 1);
+    const pathPoint = samplePolylineAtFraction(centerline, fraction);
+    points.push({
+      xM: pathPoint.xM,
+      yM,
+      zM: pathPoint.yM + lateralOffsetM
+    });
+  }
+  return points;
+}
+
+function estimateEffectiveRelativePermittivity(geometry: RfGeometry): number {
+  const trace = geometry.traces[0];
+  if (!trace) return geometry.stack.substrate.relativePermittivity;
+  const wh = trace.widthM / geometry.stack.substrateHeightM;
+  const er = geometry.stack.substrate.relativePermittivity;
+  return (
+    (er + 1) / 2 +
+    ((er - 1) / 2) * (1 / Math.sqrt(1 + 12 / wh) + (wh < 1 ? 0.04 * (1 - wh) ** 2 : 0))
+  );
 }
 
 function deterministicJitter(ix: number, iy: number, iz: number, salt: number): number {

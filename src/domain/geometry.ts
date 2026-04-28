@@ -18,6 +18,12 @@ export type Trace = {
   widthM: number;
   lengthM: number;
   thicknessM: number;
+  centerline?: TracePathPoint[];
+};
+
+export type TracePathPoint = {
+  xM: number;
+  yM: number;
 };
 
 export type Via = {
@@ -47,6 +53,51 @@ export type RfGeometry = {
 
 export const mmToM = (valueMm: number) => valueMm / 1000;
 export const mToMm = (valueM: number) => valueM * 1000;
+
+export function getTraceCenterline(trace: Trace): TracePathPoint[] {
+  if (trace.centerline && trace.centerline.length >= 2) {
+    return trace.centerline.map((point) => ({ ...point }));
+  }
+
+  const centerYM = trace.yM + trace.widthM / 2;
+  return [
+    { xM: trace.xM, yM: centerYM },
+    { xM: trace.xM + trace.lengthM, yM: centerYM }
+  ];
+}
+
+export function calculatePolylineLength(points: TracePathPoint[]): number {
+  return points.slice(1).reduce((length, point, index) => {
+    const previous = points[index];
+    return length + Math.hypot(point.xM - previous.xM, point.yM - previous.yM);
+  }, 0);
+}
+
+export function samplePolylineAtFraction(points: TracePathPoint[], fraction: number): TracePathPoint {
+  if (points.length === 0) return { xM: 0, yM: 0 };
+  if (points.length === 1) return { ...points[0] };
+
+  const clamped = Math.max(0, Math.min(1, fraction));
+  const totalLength = calculatePolylineLength(points);
+  if (totalLength <= 0) return { ...points[0] };
+
+  let targetLength = totalLength * clamped;
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const segmentLength = Math.hypot(current.xM - previous.xM, current.yM - previous.yM);
+    if (targetLength <= segmentLength || index === points.length - 1) {
+      const segmentFraction = segmentLength > 0 ? targetLength / segmentLength : 0;
+      return {
+        xM: previous.xM + (current.xM - previous.xM) * segmentFraction,
+        yM: previous.yM + (current.yM - previous.yM) * segmentFraction
+      };
+    }
+    targetLength -= segmentLength;
+  }
+
+  return { ...points[points.length - 1] };
+}
 
 export const defaultGeometry = (substrate: Material, conductor: Material): RfGeometry => ({
   unit: "m",

@@ -3,6 +3,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BufferGeometry,
+  CatmullRomCurve3,
   Color,
   DoubleSide,
   Float32BufferAttribute,
@@ -15,16 +16,16 @@ import {
   Uint32BufferAttribute,
   Vector3
 } from "three";
-import { mToMm, type RfGeometry } from "../../domain/geometry";
+import { getTraceCenterline, mToMm, samplePolylineAtFraction, type RfGeometry } from "../../domain/geometry";
 import {
   buildConnectorProbeFrames,
-  buildPowerFlowSamples,
+  buildPoyntingFlowStreamlines,
   buildTraceFieldSamples,
   estimateFieldSolveMs,
   sampleInstantaneousField,
   type ConnectorProbeFrame,
   type FieldSample,
-  type PowerFlowSample
+  type PowerFlowStreamline
 } from "../../fields/fieldSampling";
 import { buildExtrudedGeometryMesh, type ExtrudedMeshSolid } from "../../geometry/extrudedMesh";
 import { getAnalyticalModelDescriptor, type AnalyticalModelId } from "../../physics/analyticalModels";
@@ -348,6 +349,9 @@ function ExtrudedMeshScene({
   const substrateHeightMm = mToMm(geometry.stack.substrateHeightM);
   const boardWidthMm = mToMm(geometry.boardWidthM);
   const trace = geometry.traces[0];
+  const traceCenterline = trace ? getTraceCenterline(trace) : [];
+  const traceMidpoint = trace ? samplePolylineAtFraction(traceCenterline, 0.5) : null;
+  const traceEndpoint = trace ? samplePolylineAtFraction(traceCenterline, 1) : null;
   const model = getAnalyticalModelDescriptor(modelId);
   const fieldSamples = useMemo(
     () => fieldMode === "solver" ? [] : buildTraceFieldSamples(geometry),
@@ -357,7 +361,16 @@ function ExtrudedMeshScene({
     () => buildFieldCellGrid(geometry, fieldSolve, visualSettings),
     [fieldSolve, geometry, visualSettings]
   );
-  const powerFlowSamples = useMemo(() => buildPowerFlowSamples(geometry), [geometry]);
+  const powerFlowStreamlines = useMemo(
+    () =>
+      buildPoyntingFlowStreamlines(geometry, fieldSolve, {
+        streamlineCount: Math.round(10 + visualSettings.pointScale * 8),
+        pointsAlongTrace: 56,
+        crossSectionSamplesX: Math.round(20 + visualSettings.pointScale * 10),
+        crossSectionSamplesY: Math.round(10 + visualSettings.pointScale * 4)
+      }),
+    [fieldSolve, geometry, visualSettings.pointScale]
+  );
 
   return (
     <group position={[-boardLengthMm / 2, -substrateHeightMm / 2, -boardWidthMm / 2]}>
@@ -367,7 +380,7 @@ function ExtrudedMeshScene({
       {fieldMode === "solver" && (
         <>
           <FieldCellGridMesh grid={fieldCellGrid} visualSettings={visualSettings} />
-          {visualSettings.powerFlow && <PowerFlowLayer samples={powerFlowSamples} />}
+          {visualSettings.powerFlow && <PowerFlowLayer streamlines={powerFlowStreamlines} />}
         </>
       )}
       <AnimatedFieldHeatmap samples={fieldSamples} onSelectSample={onSelectSample} />
@@ -376,17 +389,17 @@ function ExtrudedMeshScene({
           <DimensionLabel
             text={`${mToMm(trace.lengthM).toFixed(1)} mm`}
             position={[
-              mToMm(trace.xM + trace.lengthM / 2),
+              mToMm(traceMidpoint?.xM ?? trace.xM + trace.lengthM / 2),
               substrateHeightMm + 2.2,
-              mToMm(trace.yM) - 2.5
+              mToMm((traceMidpoint?.yM ?? trace.yM) - trace.widthM * 0.9)
             ]}
           />
           <DimensionLabel
             text={`${mToMm(trace.widthM).toFixed(2)} mm`}
             position={[
-              mToMm(trace.xM + trace.lengthM) + 3,
+              mToMm(traceEndpoint?.xM ?? trace.xM + trace.lengthM) + 3,
               substrateHeightMm + 1.4,
-              mToMm(trace.yM + trace.widthM / 2)
+              mToMm(traceEndpoint?.yM ?? trace.yM + trace.widthM / 2)
             ]}
           />
         </>
@@ -754,34 +767,98 @@ const fieldCellFragmentShader = `
   }
 `;
 
-function PowerFlowLayer({ samples }: { samples: PowerFlowSample[] }) {
+function PowerFlowLayer({ streamlines }: { streamlines: PowerFlowStreamline[] }) {
   return (
     <group>
-      {samples.map((sample, index) => (
-        <PowerFlowParticle key={`${sample.xM}-${sample.zM}-${index}`} sample={sample} />
+      {streamlines.map((streamline) => (
+        <PowerFlowStreamlineTube key={streamline.id} streamline={streamline} />
       ))}
     </group>
   );
 }
 
-function PowerFlowParticle({ sample }: { sample: PowerFlowSample }) {
-  const meshRef = useRef<Mesh>(null);
+function PowerFlowStreamlineTube({ streamline }: { streamline: PowerFlowStreamline }) {
+  const materialRef = useRef<MeshStandardMaterial>(null);
+  const curve = useMemo(
+    () =>
+      new CatmullRomCurve3(
+        streamline.points.map((point) => new Vector3(mToMm(point.xM), mToMm(point.yM), mToMm(point.zM))),
+        false,
+        "catmullrom",
+        0.08
+      ),
+    [streamline]
+  );
+  const radiusMm = 0.035 + streamline.normalizedPowerDensity * 0.12;
   const color = useMemo(() => new Color("#ffd45a"), []);
 
   useFrame(({ clock }) => {
-    if (!meshRef.current) return;
-    const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * Math.PI * 2.2 - sample.phaseRad);
-    const material = meshRef.current.material as MeshStandardMaterial;
-    meshRef.current.position.x = mToMm(sample.xM) + ((clock.elapsedTime * 8 + sample.phaseRad * 1.6) % mToMm(0.004));
-    meshRef.current.scale.set(0.52 + pulse * 0.48, 0.52 + pulse * 0.18, 0.52 + pulse * 0.18);
-    material.opacity = 0.08 + pulse * 0.34 * sample.amplitude;
-    material.emissive.copy(color).multiplyScalar(0.32 + pulse * 0.62);
+    if (!materialRef.current) return;
+    const pulse = 0.55 + 0.45 * Math.sin(clock.elapsedTime * Math.PI * 2.4 - streamline.phaseRad);
+    materialRef.current.opacity = (0.18 + streamline.normalizedPowerDensity * 0.5) * (0.75 + pulse * 0.25);
+    materialRef.current.emissive.copy(color).multiplyScalar(0.55 + pulse * 1.15);
   });
 
   return (
-    <mesh ref={meshRef} position={[mToMm(sample.xM), mToMm(sample.yM), mToMm(sample.zM)]} rotation={[0, 0, -Math.PI / 2]}>
-      <coneGeometry args={[0.1, 0.44, 12]} />
-      <meshStandardMaterial color="#ffd45a" emissive="#ffd45a" transparent opacity={0.22} depthWrite={false} />
+    <group>
+      <mesh>
+        <tubeGeometry args={[curve, 80, radiusMm, 8, false]} />
+        <meshStandardMaterial
+          ref={materialRef}
+          color="#ffd45a"
+          emissive="#ff9a1f"
+          transparent
+          opacity={0.32}
+          depthWrite={false}
+          roughness={0.35}
+          metalness={0}
+        />
+      </mesh>
+      <PowerFlowPackets curve={curve} streamline={streamline} />
+    </group>
+  );
+}
+
+function PowerFlowPackets({ curve, streamline }: { curve: CatmullRomCurve3; streamline: PowerFlowStreamline }) {
+  const packetCount = Math.max(2, Math.round(2 + streamline.normalizedPowerDensity * 3));
+  return (
+    <group>
+      {Array.from({ length: packetCount }, (_, index) => (
+        <PowerFlowPacket
+          key={`${streamline.id}-packet-${index}`}
+          curve={curve}
+          phaseOffset={(index / packetCount + streamline.phaseRad * 0.08) % 1}
+          normalizedPowerDensity={streamline.normalizedPowerDensity}
+        />
+      ))}
+    </group>
+  );
+}
+
+function PowerFlowPacket({
+  curve,
+  phaseOffset,
+  normalizedPowerDensity
+}: {
+  curve: CatmullRomCurve3;
+  phaseOffset: number;
+  normalizedPowerDensity: number;
+}) {
+  const meshRef = useRef<Mesh>(null);
+
+  useFrame(({ clock }) => {
+    if (!meshRef.current) return;
+    const t = (phaseOffset + clock.elapsedTime * (0.18 + normalizedPowerDensity * 0.14)) % 1;
+    const point = curve.getPoint(t);
+    meshRef.current.position.copy(point);
+    const pulse = 0.65 + 0.35 * Math.sin(clock.elapsedTime * Math.PI * 4 + phaseOffset * Math.PI * 2);
+    meshRef.current.scale.setScalar((0.55 + normalizedPowerDensity * 1.05) * pulse);
+  });
+
+  return (
+    <mesh ref={meshRef}>
+      <sphereGeometry args={[0.09, 14, 14]} />
+      <meshStandardMaterial color="#fff2a8" emissive="#ffd45a" transparent opacity={0.82} depthWrite={false} />
     </mesh>
   );
 }

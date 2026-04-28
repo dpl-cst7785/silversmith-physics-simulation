@@ -1,4 +1,4 @@
-import type { RfGeometry } from "../domain/geometry";
+import { getTraceCenterline, type RfGeometry, type Trace } from "../domain/geometry";
 
 export type MeshMaterialRole = "dielectric" | "conductor" | "port";
 export type MeshSolidKind = "substrate" | "ground-plane" | "trace" | "via" | "port";
@@ -75,26 +75,7 @@ export function buildExtrudedGeometryMesh(geometry: RfGeometry): ExtrudedGeometr
   }
 
   geometry.traces.forEach((trace) => {
-    solids.push(
-      buildBoxSolid({
-        id: trace.id,
-        kind: "trace",
-        materialRole: "conductor",
-        materialName: geometry.stack.conductor.name,
-        minXM: trace.xM,
-        maxXM: trace.xM + trace.lengthM,
-        minYM: geometry.stack.substrateHeightM,
-        maxYM: geometry.stack.substrateHeightM + trace.thicknessM,
-        minZM: trace.yM,
-        maxZM: trace.yM + trace.widthM,
-        metadata: {
-          name: trace.name,
-          widthM: trace.widthM,
-          lengthM: trace.lengthM,
-          conductivitySPerM: geometry.stack.conductor.conductivitySiemensPerMeter
-        }
-      })
-    );
+    solids.push(buildTraceSolid(geometry, trace));
   });
 
   geometry.vias.forEach((via) => {
@@ -127,6 +108,63 @@ export function buildExtrudedGeometryMesh(geometry: RfGeometry): ExtrudedGeometr
     unit: "m",
     solids,
     summary: summarizeSolids(solids)
+  };
+}
+
+function buildTraceSolid(geometry: RfGeometry, trace: Trace): ExtrudedMeshSolid {
+  const centerline = getTraceCenterline(trace);
+  const bottomY = geometry.stack.substrateHeightM;
+  const topY = geometry.stack.substrateHeightM + trace.thicknessM;
+  const halfWidthM = trace.widthM / 2;
+  const vertices: MeshVertex[] = [];
+
+  centerline.forEach((point, index) => {
+    const previous = centerline[Math.max(0, index - 1)];
+    const next = centerline[Math.min(centerline.length - 1, index + 1)];
+    const tangentX = next.xM - previous.xM;
+    const tangentZ = next.yM - previous.yM;
+    const tangentLength = Math.hypot(tangentX, tangentZ) || 1;
+    const normalX = -tangentZ / tangentLength;
+    const normalZ = tangentX / tangentLength;
+    const left = { xM: point.xM + normalX * halfWidthM, zM: point.yM + normalZ * halfWidthM };
+    const right = { xM: point.xM - normalX * halfWidthM, zM: point.yM - normalZ * halfWidthM };
+
+    vertices.push(
+      { xM: left.xM, yM: bottomY, zM: left.zM },
+      { xM: right.xM, yM: bottomY, zM: right.zM },
+      { xM: right.xM, yM: topY, zM: right.zM },
+      { xM: left.xM, yM: topY, zM: left.zM }
+    );
+  });
+
+  const faces: MeshFace[] = [];
+  for (let index = 0; index < centerline.length - 1; index += 1) {
+    const base = index * 4;
+    const next = (index + 1) * 4;
+    faces.push(
+      [base, next, next + 3, base + 3],
+      [base + 1, base + 2, next + 2, next + 1],
+      [base + 3, next + 3, next + 2, base + 2],
+      [base, base + 1, next + 1, next]
+    );
+  }
+  const last = (centerline.length - 1) * 4;
+  faces.push([0, 3, 2, 1], [last, last + 1, last + 2, last + 3]);
+
+  return {
+    id: trace.id,
+    kind: "trace",
+    materialRole: "conductor",
+    materialName: geometry.stack.conductor.name,
+    vertices,
+    faces,
+    metadata: {
+      name: trace.name,
+      widthM: trace.widthM,
+      lengthM: trace.lengthM,
+      centerlinePoints: centerline.length,
+      conductivitySPerM: geometry.stack.conductor.conductivitySiemensPerMeter
+    }
   };
 }
 

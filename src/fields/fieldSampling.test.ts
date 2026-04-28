@@ -5,6 +5,7 @@ import { solveMicrostripFiniteDifference } from "../simulation/finiteDifferenceM
 import {
   buildConnectorProbeFrames,
   buildPowerFlowSamples,
+  buildPoyntingFlowStreamlines,
   buildSolverFieldSamples,
   buildSolverFieldSurface,
   buildSolverFieldVolume,
@@ -105,6 +106,30 @@ describe("field sampling", () => {
     expect(samples[0].xM).toBe(defaultGeometry(defaultSubstrate, copper).traces[0].xM);
     expect(samples[1].xM).toBeGreaterThan(samples[0].xM);
     expect(samples[0].amplitude).toBeGreaterThan(0);
+  });
+
+  it("derives Poynting streamlines from solved transverse E-field energy density", () => {
+    const geometry = defaultGeometry(defaultSubstrate, copper);
+    const solve = solveMicrostripFiniteDifference(geometry, {
+      cellsX: 32,
+      cellsY: 24,
+      maxIterations: 4_000,
+      tolerance: 1e-4
+    });
+    const streamlines = buildPoyntingFlowStreamlines(geometry, solve, {
+      streamlineCount: 5,
+      pointsAlongTrace: 8,
+      crossSectionSamplesX: 12,
+      crossSectionSamplesY: 8
+    });
+
+    expect(streamlines.length).toBeGreaterThan(0);
+    expect(streamlines.length).toBeLessThanOrEqual(5);
+    expect(streamlines[0].points).toHaveLength(8);
+    expect(streamlines[0].points[1].xM).toBeGreaterThan(streamlines[0].points[0].xM);
+    expect(streamlines[0].normalizedPowerDensity).toBeGreaterThan(0);
+    expect(streamlines[0].poyntingWPerM2).toBeGreaterThan(0);
+    expect(streamlines[0].etaEffectiveOhms).toBeGreaterThan(0);
   });
 
   it("samples signed instantaneous field values from phase", () => {

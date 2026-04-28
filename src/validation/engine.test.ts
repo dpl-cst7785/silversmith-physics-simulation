@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { defaultGeometry } from "../domain/geometry";
 import { copper, defaultSubstrate } from "../domain/materials";
+import { buildGeometryPresets } from "../physics/geometryPresets";
 import { parseTouchstone } from "../physics/sParameters";
 import { buildFrequencySweep, compareValues, validateMicrostrip } from "./engine";
 
@@ -31,6 +32,22 @@ describe("validation engine", () => {
     });
 
     expect(result.analyticalAtCenter.characteristicImpedanceOhms).toBeCloseTo(50.78, 2);
+    expect(result.simulation.points).toHaveLength(3);
+    expect(result.metrics[0].pass).toBe(true);
+  });
+
+  it("validates a curved microstrip using centerline length as the transmission-line length", async () => {
+    const preset = buildGeometryPresets(defaultSubstrate, copper).find((item) => item.id === "curved-microstrip-50-ro4350b");
+    if (!preset) throw new Error("Missing curved microstrip preset.");
+
+    const result = await validateMicrostrip({
+      modelId: preset.modelId,
+      geometry: preset.geometry,
+      sweep: { startHz: 1e9, stopHz: 3e9, points: 3 }
+    });
+
+    expect(preset.geometry.traces[0].centerline?.length).toBeGreaterThan(2);
+    expect(result.analyticalAtCenter.electricalLengthRad).toBeGreaterThan(1);
     expect(result.simulation.points).toHaveLength(3);
     expect(result.metrics[0].pass).toBe(true);
   });
