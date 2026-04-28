@@ -49,6 +49,7 @@ type FieldCellGrid = {
   positions: number[];
   relevance: number[];
   phases: number[];
+  local: number[];
   indices: number[];
 };
 
@@ -418,6 +419,7 @@ function FieldCellGridMesh({
     bufferGeometry.setAttribute("position", new Float32BufferAttribute(grid.positions, 3));
     bufferGeometry.setAttribute("cellRelevance", new Float32BufferAttribute(grid.relevance, 1));
     bufferGeometry.setAttribute("cellPhase", new Float32BufferAttribute(grid.phases, 1));
+    bufferGeometry.setAttribute("cellLocal", new Float32BufferAttribute(grid.local, 2));
     bufferGeometry.setIndex(new Uint32BufferAttribute(grid.indices, 1));
     bufferGeometry.computeVertexNormals();
     return bufferGeometry;
@@ -451,15 +453,16 @@ function buildFieldCellGrid(
   visualSettings: FieldVisualSettings
 ): FieldCellGrid {
   const trace = geometry.traces[0];
-  if (!trace) return { positions: [], relevance: [], phases: [], indices: [] };
+  if (!trace) return { positions: [], relevance: [], phases: [], local: [], indices: [] };
 
-  const lengthSlices = scaledSampleCount(8, visualSettings.pointScale, visualSettings.spacing);
-  const cellStride = Math.max(2, Math.round((visualSettings.spacing * 3) / Math.max(0.5, visualSettings.pointScale)));
+  const lengthSlices = scaledSampleCount(22, visualSettings.pointScale, visualSettings.spacing);
+  const cellStride = Math.max(1, Math.round((visualSettings.spacing * 1.6) / Math.max(0.55, visualSettings.pointScale)));
   const yLimitM = Math.min(fieldSolve.grid.domainHeightM, fieldSolve.grid.substrateHeightM * visualSettings.volumeHeight);
   const maxDisplayMagnitudeVm = Math.max(fieldMagnitudePercentile(fieldSolve, 0.96), fieldSolve.field.maxElectricFieldVm * 0.18, 1);
   const positions: number[] = [];
   const relevance: number[] = [];
   const phases: number[] = [];
+  const local: number[] = [];
   const indices: number[] = [];
 
   for (let slice = 0; slice < lengthSlices; slice += 1) {
@@ -486,10 +489,11 @@ function buildFieldCellGrid(
         if (weight < 0.035) continue;
 
         const cellRelevance = Math.min(1, Math.pow(weight, 0.62));
-        pushFieldVoxel({
+        pushFieldVolumeSplat({
           positions,
           relevance,
           phases,
+          local,
           indices,
           x0M,
           x1M,
@@ -504,13 +508,14 @@ function buildFieldCellGrid(
     }
   }
 
-  return { positions, relevance, phases, indices };
+  return { positions, relevance, phases, local, indices };
 }
 
-function pushFieldVoxel({
+function pushFieldVolumeSplat({
   positions,
   relevance,
   phases,
+  local,
   indices,
   x0M,
   x1M,
@@ -524,6 +529,7 @@ function pushFieldVoxel({
   positions: number[];
   relevance: number[];
   phases: number[];
+  local: number[];
   indices: number[];
   x0M: number;
   x1M: number;
@@ -534,29 +540,54 @@ function pushFieldVoxel({
   cellRelevance: number;
   phase: number;
 }) {
+  const x0 = mToMm(x0M);
+  const x1 = mToMm(x1M);
+  const y0 = mToMm(y0M);
+  const y1 = mToMm(y1M);
+  const z0 = mToMm(z0M);
+  const z1 = mToMm(z1M);
+  const xc = (x0 + x1) / 2;
+  const yc = (y0 + y1) / 2;
+  const zc = (z0 + z1) / 2;
+
+  pushSoftQuad(positions, relevance, phases, local, indices, cellRelevance, phase, [
+    [x0, y0, zc],
+    [x1, y0, zc],
+    [x1, y1, zc],
+    [x0, y1, zc]
+  ]);
+  pushSoftQuad(positions, relevance, phases, local, indices, cellRelevance * 0.82, phase, [
+    [xc, y0, z0],
+    [xc, y0, z1],
+    [xc, y1, z1],
+    [xc, y1, z0]
+  ]);
+  pushSoftQuad(positions, relevance, phases, local, indices, cellRelevance * 0.54, phase, [
+    [x0, yc, z0],
+    [x1, yc, z0],
+    [x1, yc, z1],
+    [x0, yc, z1]
+  ]);
+}
+
+function pushSoftQuad(
+  positions: number[],
+  relevance: number[],
+  phases: number[],
+  local: number[],
+  indices: number[],
+  cellRelevance: number,
+  phase: number,
+  vertices: Array<[number, number, number]>
+) {
   const base = positions.length / 3;
-  positions.push(
-    mToMm(x0M), mToMm(y0M), mToMm(z0M),
-    mToMm(x1M), mToMm(y0M), mToMm(z0M),
-    mToMm(x1M), mToMm(y1M), mToMm(z0M),
-    mToMm(x0M), mToMm(y1M), mToMm(z0M),
-    mToMm(x0M), mToMm(y0M), mToMm(z1M),
-    mToMm(x1M), mToMm(y0M), mToMm(z1M),
-    mToMm(x1M), mToMm(y1M), mToMm(z1M),
-    mToMm(x0M), mToMm(y1M), mToMm(z1M)
-  );
-  for (let index = 0; index < 8; index += 1) {
+  for (const [x, y, z] of vertices) {
+    positions.push(x, y, z);
     relevance.push(cellRelevance);
     phases.push(phase);
   }
-  indices.push(
-    base, base + 1, base + 2, base, base + 2, base + 3,
-    base + 4, base + 6, base + 5, base + 4, base + 7, base + 6,
-    base, base + 4, base + 5, base, base + 5, base + 1,
-    base + 3, base + 2, base + 6, base + 3, base + 6, base + 7,
-    base + 1, base + 5, base + 6, base + 1, base + 6, base + 2,
-    base, base + 3, base + 7, base, base + 7, base + 4
-  );
+  local.push(0, 0, 1, 0, 1, 1, 0, 1);
+  indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
 }
 
 function sampleFieldCell(fieldSolve: FieldSolverResult, xM: number, yM: number): number {
@@ -688,12 +719,15 @@ function buildCrossSectionArrows(
 const fieldCellVertexShader = `
   attribute float cellRelevance;
   attribute float cellPhase;
+  attribute vec2 cellLocal;
   varying float vRelevance;
   varying float vPhase;
+  varying vec2 vLocal;
 
   void main() {
     vRelevance = cellRelevance;
     vPhase = cellPhase;
+    vLocal = cellLocal;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
@@ -701,6 +735,7 @@ const fieldCellVertexShader = `
 const fieldCellFragmentShader = `
   varying float vRelevance;
   varying float vPhase;
+  varying vec2 vLocal;
   uniform float time;
   uniform float opacityScale;
 
@@ -709,8 +744,11 @@ const fieldCellFragmentShader = `
     float wave = 0.5 + 0.5 * signedWave;
     vec3 red = vec3(1.0, 0.18, 0.1);
     vec3 blue = vec3(0.05, 0.42, 1.0);
-    vec3 color = mix(blue, red, wave);
-    float alpha = opacityScale * vRelevance * (0.12 + 0.22 * abs(signedWave));
+    vec3 color = mix(blue, red, wave) * (0.72 + vRelevance * 0.42);
+    vec2 centered = abs(vLocal - vec2(0.5));
+    float radial = length(centered) * 2.0;
+    float softCell = smoothstep(1.25, 0.05, radial);
+    float alpha = opacityScale * vRelevance * softCell * (0.16 + 0.26 * abs(signedWave));
     if (alpha < 0.012) discard;
     gl_FragColor = vec4(color, alpha);
   }
