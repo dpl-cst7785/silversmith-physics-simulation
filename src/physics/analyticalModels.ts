@@ -30,7 +30,8 @@ export const analyticalModels: AnalyticalModelDescriptor[] = [
     assumptions: [
       "single trace over ground plane",
       "quasi-static effective dielectric approximation",
-      "zero-thickness impedance approximation"
+      "zero-thickness impedance approximation used as validation baseline",
+      "finite-thickness estimate reported separately as model variance"
     ]
   },
   {

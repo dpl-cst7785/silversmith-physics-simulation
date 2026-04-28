@@ -14,6 +14,7 @@ transmission-line geometry + materials -> analytical model -> mock S-parameters 
 - SI-native symmetric stripline transmission line model.
 - Effective relative permittivity calculation.
 - Characteristic impedance calculation.
+- Zero-thickness and finite-thickness microstrip impedance estimates, reported separately so approximation variance is visible.
 - Phase velocity, wavelength, electrical length, and propagation delay.
 - Estimated insertion loss from simple dielectric and conductor loss approximations.
 - Deterministic mock microstrip solver that returns complex S11 and S21 values over a frequency sweep.
@@ -30,6 +31,7 @@ The microstrip model uses closed-form quasi-static textbook approximations:
 
 - Effective dielectric constant: Hammerstad-Jensen style approximation.
 - Characteristic impedance: Wheeler/Hammerstad zero-thickness approximation.
+- Finite-thickness variance: first-order Hammerstad-style correction that treats copper thickness as an increase in effective trace width.
 - Phase velocity: `c / sqrt(effective_relative_permittivity)`.
 - Wavelength: `phase_velocity / frequency`.
 - Electrical length: `2*pi * physical_length / wavelength`.
@@ -41,7 +43,8 @@ Assumptions and limitations:
 - Single uniform trace over a ground plane.
 - Non-magnetic substrate.
 - No meshing, radiation, roughness, launch discontinuities, dispersion, coupling, bends, or vias in the analytical result.
-- Conductor thickness is accepted and preserved in the model input, but the impedance equation currently uses a zero-thickness approximation. TODO comments mark where finite-thickness correction should be added.
+- The validation baseline remains the zero-thickness equation for continuity with textbook hand calculations.
+- The finite-thickness correction is shown as a secondary estimate rather than silently replacing the baseline. TODO comments mark where the er-dependent Hammerstad branch and benchmark comparisons should be added.
 
 ## Stripline Model Assumptions
 

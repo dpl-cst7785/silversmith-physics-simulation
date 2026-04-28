@@ -14,7 +14,7 @@ import { compareValidationRunRecords } from "../../validation/runComparison";
 import type { ValidationRunRecord } from "../../validation/runHistory";
 import { downloadValidationReport } from "../downloadValidationReport";
 import { NumberField } from "./GeometryRoute";
-import { SParameterPlot, ValidationMetrics, ValidationReport } from "./ResultsRoute";
+import { ModelVariance, SParameterPlot, ValidationMetrics, ValidationReport } from "./ResultsRoute";
 
 const ViewerRoute = lazy(() => import("./ViewerRoute").then((module) => ({ default: module.ViewerRoute })));
 
@@ -143,6 +143,7 @@ export function WorkflowRoute({
       <RunSummary validation={validation} runStatus={runStatus} touchstone={touchstone} isValidationStale={isValidationStale} />
       {isValidationStale && <p className="stale-text">Inputs changed after the last run. Re-run validation before using these results.</p>}
       <ValidationMetrics validation={validation} isValidationStale={isValidationStale} />
+      <ModelVariance validation={validation} />
       <ValidationReport validation={validation} isValidationStale={isValidationStale} />
       <SParameterPlot validation={validation} isValidationStale={isValidationStale} />
       <TraceWidthSweepPanel

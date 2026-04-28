@@ -62,11 +62,59 @@ export function ResultsRoute({ geometry, validation, isValidationStale, touchsto
       {parseError && <p className="error-text">{parseError}</p>}
       {isValidationStale && <p className="stale-text">Inputs changed after the last run. Re-run validation before using these results.</p>}
       <ValidationMetrics validation={validation} isValidationStale={isValidationStale} />
+      <ModelVariance validation={validation} />
       <ValidationReport validation={validation} isValidationStale={isValidationStale} />
       <SParameterPlot validation={validation} isValidationStale={isValidationStale} />
       <SimulationTable validation={validation} />
       {touchstone && <TouchstoneSummary touchstone={touchstone} />}
     </section>
+  );
+}
+
+export function ModelVariance({ validation }: { validation: ValidationResult | null }) {
+  if (!validation) return null;
+  const finiteThickness =
+    "finiteThickness" in validation.analyticalAtCenter
+      ? validation.analyticalAtCenter.finiteThickness
+      : null;
+  if (!finiteThickness) return null;
+
+  return (
+    <div className="table-section">
+      <h2>Textbook model variance</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Estimate</th>
+            <th>Z0</th>
+            <th>Delta</th>
+            <th>Assumption</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Zero-thickness microstrip</td>
+            <td>{validation.analyticalAtCenter.characteristicImpedanceOhms.toFixed(4)} ohms</td>
+            <td>0.0000 ohms</td>
+            <td>Wheeler/Hammerstad width-only approximation</td>
+          </tr>
+          <tr>
+            <td>Finite-thickness correction</td>
+            <td>{finiteThickness.characteristicImpedanceOhms.toFixed(4)} ohms</td>
+            <td>
+              {finiteThickness.deltaFromZeroThicknessOhms.toFixed(4)} ohms (
+              {finiteThickness.percentDeltaFromZeroThickness.toFixed(2)}%)
+            </td>
+            <td>{finiteThickness.assumption}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="assumptions">
+        Effective width increases by {(finiteThickness.deltaWidthM * 1e6).toFixed(2)} um for the entered conductor
+        thickness. The validation baseline remains the explicit zero-thickness textbook result until a solver or
+        benchmark dataset is selected.
+      </p>
+    </div>
   );
 }
 

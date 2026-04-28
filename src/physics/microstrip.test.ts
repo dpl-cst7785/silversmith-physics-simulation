@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { calculateEffectiveRelativePermittivity, calculateMicrostrip } from "./microstrip";
+import {
+  calculateEffectiveRelativePermittivity,
+  calculateFiniteThicknessEffectiveWidth,
+  calculateMicrostrip
+} from "./microstrip";
 
 const input = {
   traceWidthM: 0.0034,
@@ -21,7 +25,24 @@ describe("microstrip analytical model", () => {
     const result = calculateMicrostrip(input);
 
     expect(result.characteristicImpedanceOhms).toBeCloseTo(50.78, 2);
+    expect(result.zeroThicknessCharacteristicImpedanceOhms).toBeCloseTo(50.78, 2);
     expect(result.effectiveRelativePermittivity).toBeCloseTo(2.731, 3);
+  });
+
+  it("calculates a finite-thickness corrected impedance estimate", () => {
+    const result = calculateMicrostrip(input);
+
+    expect(result.finiteThickness.effectiveTraceWidthM).toBeGreaterThan(input.traceWidthM);
+    expect(result.finiteThickness.deltaWidthM).toBeCloseTo(0.0000903, 7);
+    expect(result.finiteThickness.characteristicImpedanceOhms).toBeLessThan(result.characteristicImpedanceOhms);
+    expect(result.finiteThickness.percentDeltaFromZeroThickness).toBeLessThan(0);
+  });
+
+  it("calculates finite-thickness effective width directly", () => {
+    const correction = calculateFiniteThicknessEffectiveWidth(input);
+
+    expect(correction.deltaWidthM).toBeGreaterThan(0);
+    expect(correction.effectiveTraceWidthM).toBe(input.traceWidthM + correction.deltaWidthM);
   });
 
   it("calculates phase velocity, wavelength, and electrical length", () => {

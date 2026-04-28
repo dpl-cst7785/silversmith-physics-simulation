@@ -15,6 +15,15 @@ export type MicrostripInput = {
 export type MicrostripResult = {
   effectiveRelativePermittivity: number;
   characteristicImpedanceOhms: number;
+  zeroThicknessCharacteristicImpedanceOhms: number;
+  finiteThickness: {
+    effectiveTraceWidthM: number;
+    deltaWidthM: number;
+    characteristicImpedanceOhms: number;
+    deltaFromZeroThicknessOhms: number;
+    percentDeltaFromZeroThickness: number;
+    assumption: string;
+  };
   phaseVelocityMPerS: number;
   wavelengthM: number;
   electricalLengthRad: number;
@@ -52,12 +61,15 @@ export function calculateMicrostrip(input: MicrostripInput): MicrostripResult {
 
   // Wheeler/Hammerstad closed-form impedance approximation for zero-thickness microstrip.
   // Good enough for initial textbook validation, typically within a few percent for common PCB geometries.
-  const characteristicImpedanceOhms =
-    widthToHeightRatio <= 1
-      ? (60 / Math.sqrt(effectiveRelativePermittivity)) * Math.log(8 / widthToHeightRatio + widthToHeightRatio / 4)
-      : (120 * Math.PI) /
-        (Math.sqrt(effectiveRelativePermittivity) *
-          (widthToHeightRatio + 1.393 + 0.667 * Math.log(widthToHeightRatio + 1.444)));
+  const characteristicImpedanceOhms = calculateZeroThicknessImpedance({
+    widthToHeightRatio,
+    effectiveRelativePermittivity
+  });
+  const finiteThickness = calculateFiniteThicknessCorrection({
+    input,
+    effectiveRelativePermittivity,
+    zeroThicknessCharacteristicImpedanceOhms: characteristicImpedanceOhms
+  });
 
   const phaseVelocityMPerS = SPEED_OF_LIGHT_M_PER_S / Math.sqrt(effectiveRelativePermittivity);
   const wavelengthM = phaseVelocityMPerS / input.frequencyHz;
@@ -72,6 +84,8 @@ export function calculateMicrostrip(input: MicrostripInput): MicrostripResult {
   return {
     effectiveRelativePermittivity,
     characteristicImpedanceOhms,
+    zeroThicknessCharacteristicImpedanceOhms: characteristicImpedanceOhms,
+    finiteThickness,
     phaseVelocityMPerS,
     wavelengthM,
     electricalLengthRad,
@@ -82,6 +96,29 @@ export function calculateMicrostrip(input: MicrostripInput): MicrostripResult {
 }
 
 export const calculateMicrostripImpedance = calculateMicrostrip;
+
+export function calculateFiniteThicknessEffectiveWidth(input: {
+  traceWidthM: number;
+  substrateHeightM: number;
+  conductorThicknessM: number;
+}): { effectiveTraceWidthM: number; deltaWidthM: number } {
+  validatePositive("traceWidthM", input.traceWidthM);
+  validatePositive("substrateHeightM", input.substrateHeightM);
+  validatePositive("conductorThicknessM", input.conductorThicknessM);
+
+  // First-order Hammerstad-style finite conductor thickness correction.
+  // Treats finite copper thickness as a small increase in effective strip width.
+  // This is a quasi-static engineering correction, not a substitute for field solving.
+  // TODO: add the er-dependent Hammerstad correction branch and compare against IPC calculators.
+  const cappedThicknessM = Math.min(input.conductorThicknessM, input.substrateHeightM);
+  const logArgument = Math.max((4 * Math.PI * input.traceWidthM) / cappedThicknessM, Math.E);
+  const deltaWidthM = (cappedThicknessM / Math.PI) * (1 + Math.log(logArgument));
+
+  return {
+    effectiveTraceWidthM: input.traceWidthM + deltaWidthM,
+    deltaWidthM
+  };
+}
 
 export function estimateLossDb({
   input,
@@ -107,6 +144,46 @@ export function estimateLossDb({
   const conductorLossNpPerM = surfaceResistanceOhms / (2 * characteristicImpedanceOhms * Math.max(input.traceWidthM, 1e-12));
 
   return 8.686 * (dielectricLossNpPerM + conductorLossNpPerM) * input.traceLengthM;
+}
+
+function calculateFiniteThicknessCorrection({
+  input,
+  effectiveRelativePermittivity,
+  zeroThicknessCharacteristicImpedanceOhms
+}: {
+  input: MicrostripInput;
+  effectiveRelativePermittivity: number;
+  zeroThicknessCharacteristicImpedanceOhms: number;
+}): MicrostripResult["finiteThickness"] {
+  const { effectiveTraceWidthM, deltaWidthM } = calculateFiniteThicknessEffectiveWidth(input);
+  const characteristicImpedanceOhms = calculateZeroThicknessImpedance({
+    widthToHeightRatio: effectiveTraceWidthM / input.substrateHeightM,
+    effectiveRelativePermittivity
+  });
+  const deltaFromZeroThicknessOhms = characteristicImpedanceOhms - zeroThicknessCharacteristicImpedanceOhms;
+
+  return {
+    effectiveTraceWidthM,
+    deltaWidthM,
+    characteristicImpedanceOhms,
+    deltaFromZeroThicknessOhms,
+    percentDeltaFromZeroThickness: (deltaFromZeroThicknessOhms / zeroThicknessCharacteristicImpedanceOhms) * 100,
+    assumption: "finite conductor thickness approximated as increased effective strip width"
+  };
+}
+
+function calculateZeroThicknessImpedance({
+  widthToHeightRatio,
+  effectiveRelativePermittivity
+}: {
+  widthToHeightRatio: number;
+  effectiveRelativePermittivity: number;
+}): number {
+  return widthToHeightRatio <= 1
+    ? (60 / Math.sqrt(effectiveRelativePermittivity)) * Math.log(8 / widthToHeightRatio + widthToHeightRatio / 4)
+    : (120 * Math.PI) /
+      (Math.sqrt(effectiveRelativePermittivity) *
+        (widthToHeightRatio + 1.393 + 0.667 * Math.log(widthToHeightRatio + 1.444)));
 }
 
 function validateMicrostripInput(input: MicrostripInput) {
