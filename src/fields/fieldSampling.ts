@@ -226,6 +226,8 @@ export function buildSolverFieldVolume(
     lengthM?: number;
     xOffsetM?: number;
     minNormalizedMagnitude?: number;
+    volumeHeightMultiplier?: number;
+    spacingMultiplier?: number;
   } = {}
 ): FieldVolume {
   const samplesAlongTrace = options.samplesAlongTrace ?? 52;
@@ -240,7 +242,11 @@ export function buildSolverFieldVolume(
   const directions: number[] = [];
   const amplitudes: number[] = [];
   const phases: number[] = [];
-  const yStopM = Math.min(fieldSolve.grid.domainHeightM, fieldSolve.grid.substrateHeightM * 2.7);
+  const yStopM = Math.min(
+    fieldSolve.grid.domainHeightM,
+    fieldSolve.grid.substrateHeightM * (options.volumeHeightMultiplier ?? 2.7)
+  );
+  const spacingMultiplier = options.spacingMultiplier ?? 1;
 
   for (let ix = 0; ix < samplesAlongTrace; ix += 1) {
     const xFraction = samplesAlongTrace === 1 ? 0.5 : ix / (samplesAlongTrace - 1);
@@ -261,9 +267,9 @@ export function buildSolverFieldVolume(
         const softened = Math.sqrt(normalized);
         const sign = field.eyVm >= 0 ? 1 : -1;
         positions.push(
-          xM + deterministicJitter(ix, iy, iz, 0) * lengthM * 0.003,
-          yM + deterministicJitter(ix, iy, iz, 1) * yStopM * 0.02,
-          crossSectionXM + deterministicJitter(ix, iy, iz, 2) * fieldSolve.grid.domainWidthM * 0.006
+          xM + deterministicJitter(ix, iy, iz, 0) * lengthM * 0.003 * spacingMultiplier,
+          yM + deterministicJitter(ix, iy, iz, 1) * yStopM * 0.02 * spacingMultiplier,
+          crossSectionXM + deterministicJitter(ix, iy, iz, 2) * fieldSolve.grid.domainWidthM * 0.006 * spacingMultiplier
         );
         colors.push(...fieldColor(softened, sign));
         const direction = normalizeDirection({

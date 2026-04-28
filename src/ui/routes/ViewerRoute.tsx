@@ -36,6 +36,13 @@ type Props = {
   modelId: AnalyticalModelId;
 };
 
+type FieldVisualSettings = {
+  opacity: number;
+  pointScale: number;
+  spacing: number;
+  volumeHeight: number;
+};
+
 export function ViewerRoute({ geometry, modelId }: Props) {
   const model = getAnalyticalModelDescriptor(modelId);
   const mesh = buildExtrudedGeometryMesh(geometry);
@@ -45,6 +52,12 @@ export function ViewerRoute({ geometry, modelId }: Props) {
     cellsY: 48,
     maxIterations: 7_000,
     tolerance: 8e-5
+  });
+  const [fieldVisualSettings, setFieldVisualSettings] = useState<FieldVisualSettings>({
+    opacity: 0.72,
+    pointScale: 1,
+    spacing: 1,
+    volumeHeight: 2.7
   });
   const [selectedSample, setSelectedSample] = useState<FieldSample | null>(null);
   const [probeFrames, setProbeFrames] = useState<ConnectorProbeFrame[]>(() =>
@@ -178,6 +191,7 @@ export function ViewerRoute({ geometry, modelId }: Props) {
         </div>
       </div>
       <FieldSolverControls settings={fieldSettings} onSettingsChange={setFieldSettings} />
+      <FieldVisualControls settings={fieldVisualSettings} onSettingsChange={setFieldVisualSettings} />
       {solveError && <p className="stale-text">{solveError}</p>}
       <div className="viewer-shell">
         {isSolving && (projectedSolveMs > 1_000 || elapsedSolveMs > 1_000) && (
@@ -193,6 +207,7 @@ export function ViewerRoute({ geometry, modelId }: Props) {
             modelId={modelId}
             fieldMode={fieldMode}
             fieldSolve={fieldSolve}
+            visualSettings={fieldVisualSettings}
             onSelectSample={setSelectedSample}
           />
           <OrbitControls makeDefault enableDamping />
@@ -215,6 +230,7 @@ function ExtrudedMeshScene({
   modelId,
   fieldMode,
   fieldSolve,
+  visualSettings,
   onSelectSample
 }: {
   geometry: RfGeometry;
@@ -222,6 +238,7 @@ function ExtrudedMeshScene({
   modelId: AnalyticalModelId;
   fieldMode: "solver" | "excitation";
   fieldSolve: FieldSolverResult;
+  visualSettings: FieldVisualSettings;
   onSelectSample: (sample: FieldSample) => void;
 }) {
   const boardLengthMm = mToMm(geometry.boardLengthM);
@@ -236,9 +253,14 @@ function ExtrudedMeshScene({
   const fieldVolume = useMemo(
     () => buildSolverFieldVolume(fieldSolve, {
       lengthM: trace?.lengthM ?? geometry.boardLengthM,
-      xOffsetM: trace?.xM ?? 0
+      xOffsetM: trace?.xM ?? 0,
+      samplesAlongTrace: scaledSampleCount(52, visualSettings.pointScale, visualSettings.spacing),
+      samplesAcrossSection: scaledSampleCount(26, visualSettings.pointScale, visualSettings.spacing),
+      heightLevels: scaledSampleCount(18, visualSettings.pointScale, visualSettings.spacing),
+      spacingMultiplier: visualSettings.spacing,
+      volumeHeightMultiplier: visualSettings.volumeHeight
     }),
-    [fieldSolve, geometry.boardLengthM, trace?.lengthM, trace?.xM]
+    [fieldSolve, geometry.boardLengthM, trace?.lengthM, trace?.xM, visualSettings]
   );
 
   return (
@@ -247,7 +269,7 @@ function ExtrudedMeshScene({
         <MeshSolid key={solid.id} solid={solid} />
       ))}
       {fieldMode === "solver" && (
-        <FieldVolumeCloud volume={fieldVolume} />
+        <FieldVolumeCloud volume={fieldVolume} visualSettings={visualSettings} />
       )}
       <AnimatedFieldHeatmap samples={fieldSamples} onSelectSample={onSelectSample} />
       {trace && (
@@ -281,7 +303,17 @@ function ExtrudedMeshScene({
   );
 }
 
-function FieldVolumeCloud({ volume }: { volume: FieldVolume }) {
+function scaledSampleCount(base: number, pointScale: number, spacing: number): number {
+  return Math.max(4, Math.round((base * pointScale) / spacing));
+}
+
+function FieldVolumeCloud({
+  volume,
+  visualSettings
+}: {
+  volume: FieldVolume;
+  visualSettings: FieldVisualSettings;
+}) {
   const pointsRef = useRef<Points>(null);
   const materialRef = useRef<ShaderMaterial>(null);
   const geometry = useMemo(() => {
@@ -307,7 +339,8 @@ function FieldVolumeCloud({ volume }: { volume: FieldVolume }) {
         depthWrite={false}
         uniforms={{
           time: { value: 0 },
-          pointSize: { value: 6.6 },
+          pointSize: { value: 6.6 * visualSettings.spacing },
+          opacityScale: { value: visualSettings.opacity },
           traceStartMm: { value: mToMm(volume.traceStartM) },
           traceLengthMm: { value: Math.max(0.001, mToMm(volume.traceLengthM)) }
         }}
@@ -351,6 +384,7 @@ const fieldVolumeFragmentShader = `
   varying float vPhase;
   varying vec3 vColor;
   uniform float time;
+  uniform float opacityScale;
 
   void main() {
     vec2 uv = gl_PointCoord - vec2(0.5);
@@ -363,7 +397,7 @@ const fieldVolumeFragmentShader = `
     vec3 blue = vec3(0.05, 0.42, 1.0);
     vec3 fluidColor = mix(blue, red, wave);
     vec3 color = mix(vColor, fluidColor, 0.82);
-    float alpha = softDisc * (0.045 + vAmplitude * 0.18) + core * vAmplitude * 0.08;
+    float alpha = opacityScale * (softDisc * (0.045 + vAmplitude * 0.18) + core * vAmplitude * 0.08);
     gl_FragColor = vec4(color, alpha);
   }
 `;
@@ -497,6 +531,102 @@ function FieldSolverControls({
         />
       </label>
     </div>
+  );
+}
+
+function FieldVisualControls({
+  settings,
+  onSettingsChange
+}: {
+  settings: FieldVisualSettings;
+  onSettingsChange: (settings: FieldVisualSettings) => void;
+}) {
+  return (
+    <div className="field-visual-controls">
+      <div className="section-heading-row">
+        <div>
+          <h2>Field fluid visual tuning</h2>
+          <p className="field-note">Visual-only controls for the solver-derived particle medium.</p>
+        </div>
+        <button
+          className="secondary-button"
+          onClick={() => onSettingsChange({ opacity: 0.72, pointScale: 1, spacing: 1, volumeHeight: 2.7 })}
+        >
+          Reset visual defaults
+        </button>
+      </div>
+      <VisualSlider
+        label="Opacity"
+        value={settings.opacity}
+        min={0.1}
+        max={2}
+        step={0.05}
+        suffix="x"
+        onChange={(opacity) => onSettingsChange({ ...settings, opacity })}
+      />
+      <VisualSlider
+        label="Number of points"
+        value={settings.pointScale}
+        min={0.25}
+        max={2.5}
+        step={0.05}
+        suffix="x"
+        onChange={(pointScale) => onSettingsChange({ ...settings, pointScale })}
+      />
+      <VisualSlider
+        label="Particle spacing"
+        value={settings.spacing}
+        min={0.45}
+        max={2.5}
+        step={0.05}
+        suffix="x"
+        onChange={(spacing) => onSettingsChange({ ...settings, spacing })}
+      />
+      <VisualSlider
+        label="Volume height"
+        value={settings.volumeHeight}
+        min={1.1}
+        max={3}
+        step={0.05}
+        suffix="h"
+        onChange={(volumeHeight) => onSettingsChange({ ...settings, volumeHeight })}
+      />
+    </div>
+  );
+}
+
+function VisualSlider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  suffix,
+  onChange
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  suffix: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="visual-slider">
+      <span>
+        {label}
+        <strong>{value.toFixed(2)}{suffix}</strong>
+      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
   );
 }
 

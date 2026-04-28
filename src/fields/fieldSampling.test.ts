@@ -80,7 +80,9 @@ describe("field sampling", () => {
       samplesAcrossSection: 5,
       heightLevels: 4,
       lengthM: geometry.traces[0].lengthM,
-      xOffsetM: geometry.traces[0].xM
+      xOffsetM: geometry.traces[0].xM,
+      spacingMultiplier: 1.2,
+      volumeHeightMultiplier: 2.1
     });
 
     expect(volume.positions.length).toBeGreaterThan(0);

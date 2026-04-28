@@ -282,6 +282,44 @@ legend {
   padding: 0 10px;
 }
 
+.field-visual-controls {
+  background: #ffffff;
+  border: 1px solid #dfe7e4;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  padding: 14px;
+}
+
+.field-visual-controls .section-heading-row {
+  grid-column: 1 / -1;
+}
+
+.visual-slider {
+  color: #50656e;
+  display: grid;
+  gap: 8px;
+}
+
+.visual-slider span {
+  align-items: center;
+  display: flex;
+  font-size: 0.9rem;
+  justify-content: space-between;
+}
+
+.visual-slider strong {
+  color: #18232d;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.visual-slider input {
+  accent-color: #1f6f8b;
+  width: 100%;
+}
+
 .solve-overlay {
   align-items: center;
   background: rgba(16, 24, 32, 0.88);
