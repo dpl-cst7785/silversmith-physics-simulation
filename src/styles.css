@@ -256,6 +256,34 @@ legend {
   overflow: hidden;
 }
 
+.connector-terminal {
+  background: #101820;
+  border: 1px solid #2f4454;
+  border-radius: 8px;
+  color: #d9f1ff;
+  overflow: auto;
+  padding: 18px;
+}
+
+.connector-terminal h2 {
+  color: #ffffff;
+}
+
+.connector-terminal table {
+  color: #d9f1ff;
+  min-width: 560px;
+}
+
+.connector-terminal th,
+.connector-terminal td {
+  border-bottom-color: #263846;
+}
+
+.connector-terminal th,
+.connector-terminal .assumptions {
+  color: #91b5c7;
+}
+
 .loading-panel {
   align-items: center;
   background: #ffffff;

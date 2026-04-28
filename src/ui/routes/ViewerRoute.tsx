@@ -1,7 +1,15 @@
 import { OrbitControls, Text } from "@react-three/drei";
-import { Canvas } from "@react-three/fiber";
-import { BufferGeometry, Float32BufferAttribute, Uint16BufferAttribute } from "three";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BufferGeometry, Color, Float32BufferAttribute, Mesh, MeshStandardMaterial, Uint16BufferAttribute } from "three";
 import { mToMm, type RfGeometry } from "../../domain/geometry";
+import {
+  buildConnectorProbeFrames,
+  buildTraceFieldSamples,
+  sampleInstantaneousField,
+  type ConnectorProbeFrame,
+  type FieldSample
+} from "../../fields/fieldSampling";
 import { buildExtrudedGeometryMesh, type ExtrudedMeshSolid } from "../../geometry/extrudedMesh";
 import { getAnalyticalModelDescriptor, type AnalyticalModelId } from "../../physics/analyticalModels";
 
@@ -13,6 +21,24 @@ type Props = {
 export function ViewerRoute({ geometry, modelId }: Props) {
   const model = getAnalyticalModelDescriptor(modelId);
   const mesh = buildExtrudedGeometryMesh(geometry);
+  const [probeFrames, setProbeFrames] = useState<ConnectorProbeFrame[]>(() =>
+    buildConnectorProbeFrames({ geometry, animationPhaseRad: 0 })
+  );
+
+  useEffect(() => {
+    const started = performance.now();
+    const interval = window.setInterval(() => {
+      const elapsedS = (performance.now() - started) / 1000;
+      setProbeFrames(
+        buildConnectorProbeFrames({
+          geometry,
+          animationPhaseRad: elapsedS * Math.PI * 1.6
+        })
+      );
+    }, 160);
+
+    return () => window.clearInterval(interval);
+  }, [geometry]);
 
   return (
     <section className="route viewer-route">
@@ -36,6 +62,7 @@ export function ViewerRoute({ geometry, modelId }: Props) {
           <OrbitControls makeDefault enableDamping />
         </Canvas>
       </div>
+      <ConnectorTerminal frames={probeFrames} />
     </section>
   );
 }
@@ -54,12 +81,14 @@ function ExtrudedMeshScene({
   const boardWidthMm = mToMm(geometry.boardWidthM);
   const trace = geometry.traces[0];
   const model = getAnalyticalModelDescriptor(modelId);
+  const fieldSamples = useMemo(() => buildTraceFieldSamples(geometry), [geometry]);
 
   return (
     <group position={[-boardLengthMm / 2, -substrateHeightMm / 2, -boardWidthMm / 2]}>
       {solids.map((solid) => (
         <MeshSolid key={solid.id} solid={solid} />
       ))}
+      <AnimatedFieldHeatmap samples={fieldSamples} />
       {trace && (
         <>
           <DimensionLabel
@@ -91,6 +120,41 @@ function ExtrudedMeshScene({
   );
 }
 
+function AnimatedFieldHeatmap({ samples }: { samples: FieldSample[] }) {
+  return (
+    <group>
+      {samples.map((sample) => (
+        <AnimatedFieldSample key={sample.id} sample={sample} />
+      ))}
+    </group>
+  );
+}
+
+function AnimatedFieldSample({ sample }: { sample: FieldSample }) {
+  const meshRef = useRef<Mesh>(null);
+  const red = useMemo(() => new Color("#ef3b2d"), []);
+  const blue = useMemo(() => new Color("#2f6fed"), []);
+  const neutral = useMemo(() => new Color("#edf3f5"), []);
+
+  useFrame(({ clock }) => {
+    if (!meshRef.current) return;
+    const value = sampleInstantaneousField(sample, clock.elapsedTime * Math.PI * 1.6);
+    const magnitude = Math.min(1, Math.abs(value));
+    const material = meshRef.current.material as MeshStandardMaterial;
+    const color = value >= 0 ? red : blue;
+    meshRef.current.scale.setScalar(0.45 + magnitude * 0.75);
+    material.color.copy(neutral).lerp(color, magnitude);
+    material.opacity = 0.16 + magnitude * 0.72;
+  });
+
+  return (
+    <mesh ref={meshRef} position={[mToMm(sample.xM), mToMm(sample.yM), mToMm(sample.zM)]}>
+      <sphereGeometry args={[0.28, 12, 12]} />
+      <meshStandardMaterial transparent opacity={0.35} depthWrite={false} />
+    </mesh>
+  );
+}
+
 function MeshSolid({ solid }: { solid: ExtrudedMeshSolid }) {
   const geometry = solidToBufferGeometry(solid);
   const color = solid.kind === "substrate" ? "#7db7a0" : solid.kind === "port" ? "#243746" : "#b56730";
@@ -114,6 +178,44 @@ function DimensionLabel({ text, position }: { text: string; position: [number, n
     <Text position={position} fontSize={1.1} color="#1d2934" anchorX="center">
       {text}
     </Text>
+  );
+}
+
+function ConnectorTerminal({ frames }: { frames: ConnectorProbeFrame[] }) {
+  return (
+    <div className="connector-terminal">
+      <div>
+        <p className="eyebrow">Connector terminal</p>
+        <h2>Port probe readout</h2>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Port</th>
+            <th>Voltage</th>
+            <th>Phase</th>
+            <th>Field</th>
+            <th>Normalized</th>
+          </tr>
+        </thead>
+        <tbody>
+          {frames.map((frame) => (
+            <tr key={frame.portId}>
+              <td>{frame.label}</td>
+              <td>{frame.voltageV.toFixed(3)} V</td>
+              <td>{frame.phaseDeg.toFixed(1)} deg</td>
+              <td>{frame.estimatedElectricFieldVm.toFixed(1)} V/m</td>
+              <td>{frame.normalizedField.toFixed(3)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="assumptions">
+        Red and blue samples show instantaneous AC field polarity around the trace. The terminal readout is the same
+        visual excitation sampled at each connector; solver-derived field arrays can replace this visual sampler as the
+        numerical field pipeline expands.
+      </p>
+    </div>
   );
 }
 
