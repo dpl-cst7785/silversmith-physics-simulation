@@ -24,6 +24,7 @@ transmission-line geometry + materials -> analytical model -> mock S-parameters 
 - Latest-run comparison for Z0, effective dielectric constant, estimated loss, propagation delay, and electrical length deltas.
 - Trace-width sweep studies that use the analytical model to find the width closest to a target impedance.
 - Generated 3D extruded mesh solids for substrate, ground plane, traces, vias, and ports. The viewer and mock solver metadata are driven from this mesh layer rather than hardcoded display constants.
+- Local finite-difference microstrip field solver for the 2D cross-section. It solves `div(epsilon grad V)=0` with SOR relaxation, extracts capacitance from trace charge, derives effective permittivity and Z0, and generates S-parameters from numerical impedance.
 - Touchstone `.s1p` and `.s2p` parser for frequency units, real/imaginary, magnitude/angle, and dB/angle formats.
 
 ## Microstrip Model Assumptions
@@ -127,6 +128,7 @@ Copy `.env.example` to `.env.local` for local overrides.
 - `src/geometry`: generated extruded mesh solids derived from editable RF geometry.
 - `src/physics`: analytical RF models and Touchstone utilities.
 - `src/simulation`: solver interfaces, job lifecycle types, metadata, and mock S-parameter generation.
+- `src/simulation/finiteDifferenceMicrostrip.ts`: first local numerical field solver for microstrip cross-sections.
 - `src/validation`: comparison engine for analytical, simulated, and imported S-parameter results.
 - `src/ui`: route-level React experience.
 

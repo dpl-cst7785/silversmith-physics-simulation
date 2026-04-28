@@ -262,6 +262,7 @@ function SimulationTable({ validation }: { validation: ValidationResult | null }
             <th>S21</th>
             <th>Return loss</th>
             <th>Insertion loss</th>
+            <th>Matched loss</th>
             <th>VSWR</th>
             <th>Extracted Z0</th>
           </tr>
@@ -280,6 +281,7 @@ function SimulationTable({ validation }: { validation: ValidationResult | null }
                 <td>{metrics.s21Db?.toFixed(2)} dB</td>
                 <td>{metrics.returnLossDb.toFixed(2)} dB</td>
                 <td>{metrics.insertionLossDb?.toFixed(2)} dB</td>
+                <td>{point.matchedLineLossDb.toFixed(2)} dB</td>
                 <td>{metrics.vswr.toFixed(2)}</td>
                 <td>{point.extractedImpedanceOhms.toFixed(2)} ohms</td>
               </tr>

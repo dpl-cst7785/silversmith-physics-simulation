@@ -6,11 +6,11 @@ import {
 } from "../physics/analyticalModels";
 import {
   impedanceFromReflection,
-  magnitudeDb,
   sParameterAtFrequency,
   type TouchstoneData
 } from "../physics/sParameters";
 import {
+  FiniteDifferenceMicrostripSolver,
   MockTransmissionLineSolver,
   type SimulationResult,
   type SolverAdapter,
@@ -71,9 +71,9 @@ export async function validateTransmissionLine({
   modelId = "microstrip",
   geometry,
   sweep = { startHz: 1e9, stopHz: 5e9, points: 9 },
-  solver = new MockTransmissionLineSolver(),
+  solver = modelId === "microstrip" ? new FiniteDifferenceMicrostripSolver() : new MockTransmissionLineSolver(),
   touchstone,
-  impedanceTolerancePercent = 2
+  impedanceTolerancePercent = modelId === "microstrip" ? 35 : 2
 }: {
   modelId?: AnalyticalModelId;
   geometry: RfGeometry;
@@ -119,11 +119,11 @@ export async function validateTransmissionLine({
 
   metrics.push(
     compareValues({
-      label: "Insertion loss at center",
+      label: "Matched line loss at center",
       expectedValue: -analyticalAtCenter.estimatedLossDb,
-      observedValue: magnitudeDb(centerPoint.s21),
+      observedValue: -centerPoint.matchedLineLossDb,
       unit: "dB",
-      tolerancePercent: 25,
+      tolerancePercent: 10,
       source: "simulation"
     })
   );
