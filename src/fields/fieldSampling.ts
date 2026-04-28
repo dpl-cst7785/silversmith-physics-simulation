@@ -50,6 +50,14 @@ export type FieldVolume = {
   traceLengthM: number;
 };
 
+export type PowerFlowSample = {
+  xM: number;
+  yM: number;
+  zM: number;
+  amplitude: number;
+  phaseRad: number;
+};
+
 export function buildTraceFieldSamples(
   geometry: RfGeometry,
   options: {
@@ -235,8 +243,9 @@ export function buildSolverFieldVolume(
   const heightLevels = options.heightLevels ?? 18;
   const lengthM = options.lengthM ?? fieldSolve.grid.domainWidthM;
   const xOffsetM = options.xOffsetM ?? 0;
-  const minNormalizedMagnitude = options.minNormalizedMagnitude ?? 0.035;
+  const minNormalizedMagnitude = options.minNormalizedMagnitude ?? 0.09;
   const maxMagnitudeVm = Math.max(fieldSolve.field.maxElectricFieldVm, 1);
+  const displayMagnitudeVm = Math.max(percentileMagnitude(fieldSolve, 0.96), maxMagnitudeVm * 0.18, 1);
   const positions: number[] = [];
   const colors: number[] = [];
   const directions: number[] = [];
@@ -261,8 +270,11 @@ export function buildSolverFieldVolume(
         const yFraction = heightLevels === 1 ? 0.5 : iy / (heightLevels - 1);
         const yM = yStopM * yFraction;
         const field = sampleFieldGrid(fieldSolve, crossSectionXM, yM);
-        const normalized = Math.min(1, field.magnitudeVm / maxMagnitudeVm);
+        const normalized = Math.min(1, field.magnitudeVm / displayMagnitudeVm);
         if (normalized < minNormalizedMagnitude) continue;
+
+        const densityGate = deterministicUnit(ix, iy, iz, 3);
+        if (densityGate > Math.pow(normalized, 0.72)) continue;
 
         const softened = Math.sqrt(normalized);
         const sign = field.eyVm >= 0 ? 1 : -1;
@@ -273,7 +285,7 @@ export function buildSolverFieldVolume(
         );
         colors.push(...fieldColor(softened, sign));
         const direction = normalizeDirection({
-          x: 0.55 + softened * 0.45,
+          x: 0,
           y: field.eyVm / maxMagnitudeVm,
           z: field.exVm / maxMagnitudeVm
         });
@@ -294,6 +306,41 @@ export function buildSolverFieldVolume(
     traceStartM: xOffsetM,
     traceLengthM: lengthM
   };
+}
+
+export function buildPowerFlowSamples(
+  geometry: RfGeometry,
+  options: {
+    samplesAlongTrace?: number;
+    lanes?: number;
+  } = {}
+): PowerFlowSample[] {
+  const trace = geometry.traces[0];
+  if (!trace) return [];
+
+  const samplesAlongTrace = options.samplesAlongTrace ?? 34;
+  const lanes = options.lanes ?? 3;
+  const centerZM = trace.yM + trace.widthM / 2;
+  const laneSpacingM = trace.widthM * 0.36;
+  const yM = geometry.stack.substrateHeightM + geometry.stack.substrateHeightM * 0.2;
+  const samples: PowerFlowSample[] = [];
+
+  for (let lane = 0; lane < lanes; lane += 1) {
+    const laneFraction = lanes === 1 ? 0.5 : lane / (lanes - 1);
+    const laneOffsetM = (laneFraction - 0.5) * laneSpacingM * (lanes - 1);
+    for (let ix = 0; ix < samplesAlongTrace; ix += 1) {
+      const xFraction = samplesAlongTrace === 1 ? 0.5 : ix / (samplesAlongTrace - 1);
+      samples.push({
+        xM: trace.xM + trace.lengthM * xFraction,
+        yM,
+        zM: centerZM + laneOffsetM,
+        amplitude: 1 - Math.abs(laneFraction - 0.5) * 0.22,
+        phaseRad: xFraction * Math.PI * 2 + lane * 0.24
+      });
+    }
+  }
+
+  return samples;
 }
 
 export function sampleInstantaneousField(sample: FieldSample, animationPhaseRad: number): number {
@@ -372,6 +419,19 @@ function fieldColor(normalized: number, sign: number): [number, number, number] 
 }
 
 function deterministicJitter(ix: number, iy: number, iz: number, salt: number): number {
+  return (deterministicUnit(ix, iy, iz, salt) - 0.5) * 2;
+}
+
+function deterministicUnit(ix: number, iy: number, iz: number, salt: number): number {
   const value = Math.sin((ix + 1) * 12.9898 + (iy + 1) * 78.233 + (iz + 1) * 37.719 + salt * 19.19);
-  return (value - Math.floor(value) - 0.5) * 2;
+  return value - Math.floor(value);
+}
+
+function percentileMagnitude(fieldSolve: FieldSolverResult, percentile: number): number {
+  const magnitudes = fieldSolve.field.electricFieldXVm.map((exVm, index) =>
+    Math.hypot(exVm, fieldSolve.field.electricFieldYVm[index] ?? 0)
+  );
+  magnitudes.sort((a, b) => a - b);
+  const index = Math.max(0, Math.min(magnitudes.length - 1, Math.floor((magnitudes.length - 1) * percentile)));
+  return magnitudes[index] ?? 1;
 }

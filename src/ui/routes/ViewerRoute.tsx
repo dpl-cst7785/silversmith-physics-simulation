@@ -17,13 +17,15 @@ import {
 import { mToMm, type RfGeometry } from "../../domain/geometry";
 import {
   buildConnectorProbeFrames,
+  buildPowerFlowSamples,
   buildSolverFieldVolume,
   buildTraceFieldSamples,
   estimateFieldSolveMs,
   sampleInstantaneousField,
   type ConnectorProbeFrame,
   type FieldSample,
-  type FieldVolume
+  type FieldVolume,
+  type PowerFlowSample
 } from "../../fields/fieldSampling";
 import { buildExtrudedGeometryMesh, type ExtrudedMeshSolid } from "../../geometry/extrudedMesh";
 import { getAnalyticalModelDescriptor, type AnalyticalModelId } from "../../physics/analyticalModels";
@@ -41,6 +43,7 @@ type FieldVisualSettings = {
   pointScale: number;
   spacing: number;
   volumeHeight: number;
+  powerFlow: boolean;
 };
 
 export function ViewerRoute({ geometry, modelId }: Props) {
@@ -57,7 +60,8 @@ export function ViewerRoute({ geometry, modelId }: Props) {
     opacity: 0.72,
     pointScale: 1,
     spacing: 1,
-    volumeHeight: 2.7
+    volumeHeight: 1.8,
+    powerFlow: true
   });
   const [selectedSample, setSelectedSample] = useState<FieldSample | null>(null);
   const [probeFrames, setProbeFrames] = useState<ConnectorProbeFrame[]>(() =>
@@ -178,7 +182,7 @@ export function ViewerRoute({ geometry, modelId }: Props) {
       <div className="section-heading-row">
         <p className="field-note">
           {fieldMode === "solver"
-            ? "Solver field solves div(epsilon grad V)=0 on the cross-section, then projects the numerical E-field into the 3D geometry."
+            ? "Solver field shows transverse quasi-TEM E-field from trace to ground/fringing edges; amber markers show power flow along the line."
             : "Excitation preview animates the driven signal direction and phase before solving; it is useful for source inspection, not a numerical field result."}
         </p>
         <div className="segmented-control" aria-label="Field visualization mode">
@@ -262,6 +266,7 @@ function ExtrudedMeshScene({
     }),
     [fieldSolve, geometry.boardLengthM, trace?.lengthM, trace?.xM, visualSettings]
   );
+  const powerFlowSamples = useMemo(() => buildPowerFlowSamples(geometry), [geometry]);
 
   return (
     <group position={[-boardLengthMm / 2, -substrateHeightMm / 2, -boardWidthMm / 2]}>
@@ -269,7 +274,10 @@ function ExtrudedMeshScene({
         <MeshSolid key={solid.id} solid={solid} />
       ))}
       {fieldMode === "solver" && (
-        <FieldVolumeCloud volume={fieldVolume} visualSettings={visualSettings} />
+        <>
+          <FieldVolumeCloud volume={fieldVolume} visualSettings={visualSettings} />
+          {visualSettings.powerFlow && <PowerFlowLayer samples={powerFlowSamples} />}
+        </>
       )}
       <AnimatedFieldHeatmap samples={fieldSamples} onSelectSample={onSelectSample} />
       {trace && (
@@ -369,10 +377,8 @@ const fieldVolumeVertexShader = `
     vPhase = fieldPhase;
     vColor = clamp(color, 0.0, 1.0);
     vec3 animatedPosition = position;
-    float flow = mod(position.x - traceStartMm + time * (5.8 + fieldAmplitude * 6.4) + fieldPhase * 1.9, traceLengthMm);
-    animatedPosition.x = traceStartMm + flow;
-    float pulse = sin(time * 3.4 - fieldPhase * 2.0);
-    animatedPosition.yz += fieldDirection.yz * pulse * (0.65 + fieldAmplitude * 1.45);
+    float wave = sin(time * 4.2 - fieldPhase * 2.4);
+    animatedPosition.yz += fieldDirection.yz * wave * (0.9 + fieldAmplitude * 2.2);
     vec4 mvPosition = modelViewMatrix * vec4(animatedPosition, 1.0);
     gl_PointSize = pointSize * (0.75 + fieldAmplitude * 1.65) * (300.0 / max(80.0, -mvPosition.z));
     gl_Position = projectionMatrix * mvPosition;
@@ -401,6 +407,38 @@ const fieldVolumeFragmentShader = `
     gl_FragColor = vec4(color, alpha);
   }
 `;
+
+function PowerFlowLayer({ samples }: { samples: PowerFlowSample[] }) {
+  return (
+    <group>
+      {samples.map((sample, index) => (
+        <PowerFlowParticle key={`${sample.xM}-${sample.zM}-${index}`} sample={sample} />
+      ))}
+    </group>
+  );
+}
+
+function PowerFlowParticle({ sample }: { sample: PowerFlowSample }) {
+  const meshRef = useRef<Mesh>(null);
+  const color = useMemo(() => new Color("#ffd45a"), []);
+
+  useFrame(({ clock }) => {
+    if (!meshRef.current) return;
+    const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * Math.PI * 2.2 - sample.phaseRad);
+    const material = meshRef.current.material as MeshStandardMaterial;
+    meshRef.current.position.x = mToMm(sample.xM) + ((clock.elapsedTime * 8 + sample.phaseRad * 1.6) % mToMm(0.004));
+    meshRef.current.scale.set(0.8 + pulse * 0.9, 0.8 + pulse * 0.3, 0.8 + pulse * 0.3);
+    material.opacity = 0.18 + pulse * 0.62 * sample.amplitude;
+    material.emissive.copy(color).multiplyScalar(0.6 + pulse * 1.2);
+  });
+
+  return (
+    <mesh ref={meshRef} position={[mToMm(sample.xM), mToMm(sample.yM), mToMm(sample.zM)]} rotation={[0, 0, -Math.PI / 2]}>
+      <coneGeometry args={[0.16, 0.72, 12]} />
+      <meshStandardMaterial color="#ffd45a" emissive="#ffd45a" transparent opacity={0.45} depthWrite={false} />
+    </mesh>
+  );
+}
 
 function AnimatedFieldHeatmap({
   samples,
@@ -550,7 +588,7 @@ function FieldVisualControls({
         </div>
         <button
           className="secondary-button"
-          onClick={() => onSettingsChange({ opacity: 0.72, pointScale: 1, spacing: 1, volumeHeight: 2.7 })}
+          onClick={() => onSettingsChange({ opacity: 0.72, pointScale: 1, spacing: 1, volumeHeight: 1.8, powerFlow: true })}
         >
           Reset visual defaults
         </button>
@@ -591,6 +629,17 @@ function FieldVisualControls({
         suffix="h"
         onChange={(volumeHeight) => onSettingsChange({ ...settings, volumeHeight })}
       />
+      <label className="visual-toggle">
+        <input
+          type="checkbox"
+          checked={settings.powerFlow}
+          onChange={(event) => onSettingsChange({ ...settings, powerFlow: event.target.checked })}
+        />
+        <span>
+          Show power flow
+          <strong>Poynting direction along trace</strong>
+        </span>
+      </label>
     </div>
   );
 }

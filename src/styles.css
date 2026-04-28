@@ -320,6 +320,32 @@ legend {
   width: 100%;
 }
 
+.visual-toggle {
+  align-items: center;
+  color: #50656e;
+  display: flex;
+  gap: 10px;
+  min-height: 42px;
+}
+
+.visual-toggle input {
+  accent-color: #1f6f8b;
+  height: 18px;
+  width: 18px;
+}
+
+.visual-toggle span,
+.visual-toggle strong {
+  display: block;
+}
+
+.visual-toggle strong {
+  color: #18232d;
+  font-size: 0.82rem;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
 .solve-overlay {
   align-items: center;
   background: rgba(16, 24, 32, 0.88);

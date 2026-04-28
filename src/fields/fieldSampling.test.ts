@@ -4,6 +4,7 @@ import { copper, defaultSubstrate } from "../domain/materials";
 import { solveMicrostripFiniteDifference } from "../simulation/finiteDifferenceMicrostrip";
 import {
   buildConnectorProbeFrames,
+  buildPowerFlowSamples,
   buildSolverFieldSamples,
   buildSolverFieldSurface,
   buildSolverFieldVolume,
@@ -92,6 +93,18 @@ describe("field sampling", () => {
     expect(volume.amplitudes).toHaveLength(volume.positions.length / 3);
     expect(volume.phases).toHaveLength(volume.positions.length / 3);
     expect(volume.traceLengthM).toBe(geometry.traces[0].lengthM);
+  });
+
+  it("builds longitudinal power-flow samples separately from transverse E-field samples", () => {
+    const samples = buildPowerFlowSamples(defaultGeometry(defaultSubstrate, copper), {
+      samplesAlongTrace: 5,
+      lanes: 3
+    });
+
+    expect(samples).toHaveLength(15);
+    expect(samples[0].xM).toBe(defaultGeometry(defaultSubstrate, copper).traces[0].xM);
+    expect(samples[1].xM).toBeGreaterThan(samples[0].xM);
+    expect(samples[0].amplitude).toBeGreaterThan(0);
   });
 
   it("samples signed instantaneous field values from phase", () => {
