@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { defaultGeometry } from "../domain/geometry";
 import { copper, defaultSubstrate } from "../domain/materials";
+import { solveMicrostripFiniteDifference } from "../simulation/finiteDifferenceMicrostrip";
 import {
   buildConnectorProbeFrames,
   buildSolverFieldSamples,
+  buildSolverFieldSurface,
+  estimateFieldSolveMs,
   buildTraceFieldSamples,
   sampleInstantaneousField
 } from "./fieldSampling";
@@ -40,6 +43,27 @@ describe("field sampling", () => {
     expect(samples[0].amplitude).toBeGreaterThan(0);
     expect(samples[0].solverProbe?.magnitudeVm).toBeGreaterThan(0);
     expect(Math.hypot(samples[0].direction.x, samples[0].direction.y, samples[0].direction.z)).toBeCloseTo(1);
+  });
+
+  it("builds a near-continuous field surface from solver data", () => {
+    const geometry = defaultGeometry(defaultSubstrate, copper);
+    const solve = solveMicrostripFiniteDifference(geometry, {
+      cellsX: 32,
+      cellsY: 24,
+      maxIterations: 4_000,
+      tolerance: 1e-4
+    });
+    const surface = buildSolverFieldSurface(solve, {
+      xSamples: 6,
+      ySamples: 5,
+      lengthM: geometry.traces[0].lengthM
+    });
+
+    expect(surface.positions).toHaveLength(6 * 5 * 3);
+    expect(surface.colors).toHaveLength(6 * 5 * 3);
+    expect(surface.indices.length).toBeGreaterThan(0);
+    expect(surface.maxMagnitudeVm).toBeGreaterThan(0);
+    expect(estimateFieldSolveMs({ cellsX: 64, cellsY: 48, maxIterations: 7_000 })).toBeGreaterThan(0);
   });
 
   it("samples signed instantaneous field values from phase", () => {

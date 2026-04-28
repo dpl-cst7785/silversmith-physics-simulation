@@ -32,6 +32,13 @@ export type ConnectorProbeFrame = {
   estimatedElectricFieldVm: number;
 };
 
+export type FieldSurface = {
+  positions: number[];
+  colors: number[];
+  indices: number[];
+  maxMagnitudeVm: number;
+};
+
 export function buildTraceFieldSamples(
   geometry: RfGeometry,
   options: {
@@ -149,8 +156,62 @@ export function buildSolverFieldSamples(
   return samples;
 }
 
+export function buildSolverFieldSurface(
+  fieldSolve: FieldSolverResult,
+  options: {
+    xSamples?: number;
+    ySamples?: number;
+    lengthM?: number;
+  } = {}
+): FieldSurface {
+  const xSamples = options.xSamples ?? 56;
+  const ySamples = options.ySamples ?? 34;
+  const lengthM = options.lengthM ?? fieldSolve.grid.domainWidthM;
+  const maxMagnitudeVm = Math.max(fieldSolve.field.maxElectricFieldVm, 1);
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+  const yStopM = Math.min(fieldSolve.grid.domainHeightM, fieldSolve.grid.substrateHeightM * 2.4);
+
+  for (let ix = 0; ix < xSamples; ix += 1) {
+    const xFraction = xSamples === 1 ? 0.5 : ix / (xSamples - 1);
+    const traceXM = lengthM * xFraction;
+    for (let iy = 0; iy < ySamples; iy += 1) {
+      const yFraction = ySamples === 1 ? 0.5 : iy / (ySamples - 1);
+      const crossSectionXM = fieldSolve.grid.domainWidthM * yFraction;
+      const fieldYM = yStopM * (1 - Math.abs(yFraction - 0.5) * 0.15);
+      const field = sampleFieldGrid(fieldSolve, crossSectionXM, fieldYM);
+      const normalized = Math.min(1, field.magnitudeVm / maxMagnitudeVm);
+      const sign = field.eyVm >= 0 ? 1 : -1;
+      positions.push(traceXM, fieldYM, crossSectionXM);
+      colors.push(...fieldColor(normalized, sign));
+    }
+  }
+
+  for (let ix = 0; ix < xSamples - 1; ix += 1) {
+    for (let iy = 0; iy < ySamples - 1; iy += 1) {
+      const a = ix * ySamples + iy;
+      const b = (ix + 1) * ySamples + iy;
+      const c = (ix + 1) * ySamples + iy + 1;
+      const d = ix * ySamples + iy + 1;
+      indices.push(a, b, c, a, c, d);
+    }
+  }
+
+  return {
+    positions,
+    colors,
+    indices,
+    maxMagnitudeVm
+  };
+}
+
 export function sampleInstantaneousField(sample: FieldSample, animationPhaseRad: number): number {
   return sample.amplitude * Math.sin(animationPhaseRad - sample.phaseRad);
+}
+
+export function estimateFieldSolveMs(settings: { cellsX: number; cellsY: number; maxIterations: number }): number {
+  return Math.max(150, Math.round((settings.cellsX * settings.cellsY * settings.maxIterations) / 52_000));
 }
 
 export function buildConnectorProbeFrames({
@@ -212,4 +273,10 @@ export function sampleFieldGrid(
     eyVm,
     magnitudeVm: Math.hypot(exVm, eyVm)
   };
+}
+
+function fieldColor(normalized: number, sign: number): [number, number, number] {
+  const base = 0.12 + normalized * 0.25;
+  if (sign >= 0) return [base + normalized * 1.25, base * 0.65, base * 0.75];
+  return [base * 0.65, base * 0.85, base + normalized * 1.25];
 }

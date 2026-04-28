@@ -254,6 +254,73 @@ legend {
   height: min(68vh, 680px);
   min-height: 420px;
   overflow: hidden;
+  position: relative;
+}
+
+.field-controls {
+  background: #ffffff;
+  border: 1px solid #dfe7e4;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  padding: 14px;
+}
+
+.field-controls label {
+  color: #50656e;
+  display: grid;
+  font-size: 0.9rem;
+  gap: 6px;
+}
+
+.field-controls input {
+  border: 1px solid #cad8d4;
+  border-radius: 6px;
+  color: #18232d;
+  height: 38px;
+  padding: 0 10px;
+}
+
+.solve-overlay {
+  align-items: center;
+  background: rgba(16, 24, 32, 0.88);
+  border: 1px solid rgba(217, 241, 255, 0.24);
+  border-radius: 8px;
+  color: #ffffff;
+  display: flex;
+  gap: 12px;
+  left: 16px;
+  padding: 12px 14px;
+  position: absolute;
+  top: 16px;
+  z-index: 4;
+}
+
+.solve-overlay strong,
+.solve-overlay span {
+  display: block;
+}
+
+.solve-overlay span {
+  color: #b8d6e6;
+  font-size: 0.88rem;
+  margin-top: 3px;
+}
+
+.solve-spinner {
+  animation: spin 0.8s linear infinite;
+  border: 3px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  border-top-color: #ff4b4b;
+  height: 28px;
+  width: 28px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .connector-terminal {

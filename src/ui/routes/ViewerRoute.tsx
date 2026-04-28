@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BufferGeometry,
   Color,
+  DoubleSide,
   Float32BufferAttribute,
   Group,
   Mesh,
@@ -16,10 +17,13 @@ import { mToMm, type RfGeometry } from "../../domain/geometry";
 import {
   buildConnectorProbeFrames,
   buildSolverFieldSamples,
+  buildSolverFieldSurface,
   buildTraceFieldSamples,
+  estimateFieldSolveMs,
   sampleInstantaneousField,
   type ConnectorProbeFrame,
-  type FieldSample
+  type FieldSample,
+  type FieldSurface
 } from "../../fields/fieldSampling";
 import { buildExtrudedGeometryMesh, type ExtrudedMeshSolid } from "../../geometry/extrudedMesh";
 import { getAnalyticalModelDescriptor, type AnalyticalModelId } from "../../physics/analyticalModels";
@@ -45,10 +49,49 @@ export function ViewerRoute({ geometry, modelId }: Props) {
   const [probeFrames, setProbeFrames] = useState<ConnectorProbeFrame[]>(() =>
     buildConnectorProbeFrames({ geometry, animationPhaseRad: 0 })
   );
-  const fieldSolve = useMemo(
-    () => solveMicrostripFiniteDifference(geometry, fieldSettings),
-    [fieldSettings, geometry]
+  const [fieldSolve, setFieldSolve] = useState<FieldSolverResult>(() =>
+    solveMicrostripFiniteDifference(geometry, fieldSettings)
   );
+  const [isSolving, setIsSolving] = useState(false);
+  const [elapsedSolveMs, setElapsedSolveMs] = useState(0);
+  const solveStartedAtRef = useRef<number | null>(null);
+  const projectedSolveMs = useMemo(() => estimateFieldSolveMs(fieldSettings), [fieldSettings]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const started = performance.now();
+    solveStartedAtRef.current = started;
+    setIsSolving(true);
+    setElapsedSolveMs(0);
+
+    const timer = window.setTimeout(() => {
+      const nextSolve = solveMicrostripFiniteDifference(geometry, fieldSettings);
+      if (!cancelled) {
+        setFieldSolve(nextSolve);
+        setSelectedSample(null);
+        setElapsedSolveMs(performance.now() - started);
+        setIsSolving(false);
+        solveStartedAtRef.current = null;
+      }
+    }, 20);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      solveStartedAtRef.current = null;
+    };
+  }, [fieldSettings, geometry]);
+
+  useEffect(() => {
+    if (!isSolving) return undefined;
+
+    const interval = window.setInterval(() => {
+      const started = solveStartedAtRef.current;
+      if (started) setElapsedSolveMs(performance.now() - started);
+    }, 120);
+
+    return () => window.clearInterval(interval);
+  }, [isSolving]);
 
   useEffect(() => {
     const started = performance.now();
@@ -81,20 +124,23 @@ export function ViewerRoute({ geometry, modelId }: Props) {
       <div className="section-heading-row">
         <p className="field-note">
           {fieldMode === "solver"
-            ? "Rendering projected E-field samples from the finite-difference cross-section solve."
-            : "Rendering a geometry-driven AC excitation preview."}
+            ? "Solver field solves div(epsilon grad V)=0 on the cross-section, then projects the numerical E-field into the 3D geometry."
+            : "Excitation preview animates the driven signal direction and phase before solving; it is useful for source inspection, not a numerical field result."}
         </p>
         <div className="segmented-control" aria-label="Field visualization mode">
           <button className={fieldMode === "solver" ? "active" : ""} onClick={() => setFieldMode("solver")}>
-            Solver field
+            Solver-derived
           </button>
           <button className={fieldMode === "excitation" ? "active" : ""} onClick={() => setFieldMode("excitation")}>
-            Excitation
+            Excitation preview
           </button>
         </div>
       </div>
       <FieldSolverControls settings={fieldSettings} onSettingsChange={setFieldSettings} />
       <div className="viewer-shell">
+        {isSolving && projectedSolveMs > 1_000 && (
+          <SolveOverlay elapsedMs={elapsedSolveMs} projectedMs={projectedSolveMs} />
+        )}
         <Canvas camera={{ position: [34, 28, 46], fov: 38 }}>
           <color attach="background" args={["#eef4f1"]} />
           <ambientLight intensity={0.7} />
@@ -145,12 +191,17 @@ function ExtrudedMeshScene({
     () => fieldMode === "solver" ? buildSolverFieldSamples(geometry, fieldSolve) : buildTraceFieldSamples(geometry),
     [fieldMode, fieldSolve, geometry]
   );
+  const fieldSurface = useMemo(
+    () => buildSolverFieldSurface(fieldSolve, { lengthM: trace?.lengthM ?? geometry.boardLengthM }),
+    [fieldSolve, geometry.boardLengthM, trace?.lengthM]
+  );
 
   return (
     <group position={[-boardLengthMm / 2, -substrateHeightMm / 2, -boardWidthMm / 2]}>
       {solids.map((solid) => (
         <MeshSolid key={solid.id} solid={solid} />
       ))}
+      {fieldMode === "solver" && <FieldSurfaceMesh surface={fieldSurface} />}
       <AnimatedFieldHeatmap samples={fieldSamples} onSelectSample={onSelectSample} />
       {trace && (
         <>
@@ -180,6 +231,24 @@ function ExtrudedMeshScene({
       )}
       <DimensionLabel text={model.label} position={[boardLengthMm / 2, substrateHeightMm + 4, boardWidthMm / 2]} />
     </group>
+  );
+}
+
+function FieldSurfaceMesh({ surface }: { surface: FieldSurface }) {
+  const geometry = useMemo(() => {
+    const bufferGeometry = new BufferGeometry();
+    const positionsMm = surface.positions.map((value) => mToMm(value));
+    bufferGeometry.setAttribute("position", new Float32BufferAttribute(positionsMm, 3));
+    bufferGeometry.setAttribute("color", new Float32BufferAttribute(surface.colors, 3));
+    bufferGeometry.setIndex(surface.indices);
+    bufferGeometry.computeVertexNormals();
+    return bufferGeometry;
+  }, [surface]);
+
+  return (
+    <mesh geometry={geometry}>
+      <meshBasicMaterial vertexColors transparent opacity={0.72} side={DoubleSide} depthWrite={false} />
+    </mesh>
   );
 }
 
@@ -311,6 +380,20 @@ function FieldSolverControls({
           onChange={(event) => onSettingsChange({ ...settings, tolerance: Number(event.target.value) })}
         />
       </label>
+    </div>
+  );
+}
+
+function SolveOverlay({ elapsedMs, projectedMs }: { elapsedMs: number; projectedMs: number }) {
+  return (
+    <div className="solve-overlay" role="status" aria-live="polite">
+      <div className="solve-spinner" />
+      <div>
+        <strong>Solving finite-difference field</strong>
+        <span>
+          Projected {formatDuration(projectedMs)} · elapsed {formatDuration(elapsedMs)}
+        </span>
+      </div>
     </div>
   );
 }
@@ -463,6 +546,11 @@ function ConnectorTerminal({ frames }: { frames: ConnectorProbeFrame[] }) {
       </p>
     </div>
   );
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1_000) return `${Math.max(0, Math.round(ms))} ms`;
+  return `${(ms / 1_000).toFixed(1)} s`;
 }
 
 function exportFieldSnapshot({
