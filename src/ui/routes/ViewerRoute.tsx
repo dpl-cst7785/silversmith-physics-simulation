@@ -15,6 +15,7 @@ import {
 import { mToMm, type RfGeometry } from "../../domain/geometry";
 import {
   buildConnectorProbeFrames,
+  buildSolverFieldSamples,
   buildTraceFieldSamples,
   sampleInstantaneousField,
   type ConnectorProbeFrame,
@@ -31,6 +32,7 @@ type Props = {
 export function ViewerRoute({ geometry, modelId }: Props) {
   const model = getAnalyticalModelDescriptor(modelId);
   const mesh = buildExtrudedGeometryMesh(geometry);
+  const [fieldMode, setFieldMode] = useState<"solver" | "excitation">("solver");
   const [probeFrames, setProbeFrames] = useState<ConnectorProbeFrame[]>(() =>
     buildConnectorProbeFrames({ geometry, animationPhaseRad: 0 })
   );
@@ -63,12 +65,27 @@ export function ViewerRoute({ geometry, modelId }: Props) {
           <span>{mesh.summary.faces} faces</span>
         </div>
       </header>
+      <div className="section-heading-row">
+        <p className="field-note">
+          {fieldMode === "solver"
+            ? "Rendering projected E-field samples from the finite-difference cross-section solve."
+            : "Rendering a geometry-driven AC excitation preview."}
+        </p>
+        <div className="segmented-control" aria-label="Field visualization mode">
+          <button className={fieldMode === "solver" ? "active" : ""} onClick={() => setFieldMode("solver")}>
+            Solver field
+          </button>
+          <button className={fieldMode === "excitation" ? "active" : ""} onClick={() => setFieldMode("excitation")}>
+            Excitation
+          </button>
+        </div>
+      </div>
       <div className="viewer-shell">
         <Canvas camera={{ position: [34, 28, 46], fov: 38 }}>
           <color attach="background" args={["#eef4f1"]} />
           <ambientLight intensity={0.7} />
           <directionalLight position={[12, 20, 10]} intensity={1.2} />
-          <ExtrudedMeshScene geometry={geometry} solids={mesh.solids} modelId={modelId} />
+          <ExtrudedMeshScene geometry={geometry} solids={mesh.solids} modelId={modelId} fieldMode={fieldMode} />
           <OrbitControls makeDefault enableDamping />
         </Canvas>
       </div>
@@ -80,18 +97,23 @@ export function ViewerRoute({ geometry, modelId }: Props) {
 function ExtrudedMeshScene({
   geometry,
   solids,
-  modelId
+  modelId,
+  fieldMode
 }: {
   geometry: RfGeometry;
   solids: ExtrudedMeshSolid[];
   modelId: AnalyticalModelId;
+  fieldMode: "solver" | "excitation";
 }) {
   const boardLengthMm = mToMm(geometry.boardLengthM);
   const substrateHeightMm = mToMm(geometry.stack.substrateHeightM);
   const boardWidthMm = mToMm(geometry.boardWidthM);
   const trace = geometry.traces[0];
   const model = getAnalyticalModelDescriptor(modelId);
-  const fieldSamples = useMemo(() => buildTraceFieldSamples(geometry), [geometry]);
+  const fieldSamples = useMemo(
+    () => fieldMode === "solver" ? buildSolverFieldSamples(geometry) : buildTraceFieldSamples(geometry),
+    [fieldMode, geometry]
+  );
 
   return (
     <group position={[-boardLengthMm / 2, -substrateHeightMm / 2, -boardWidthMm / 2]}>

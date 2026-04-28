@@ -1,4 +1,5 @@
 import type { RfGeometry } from "../domain/geometry";
+import { solveMicrostripFiniteDifference, type FieldSolverResult } from "../simulation/finiteDifferenceMicrostrip";
 
 export type FieldSample = {
   id: string;
@@ -76,6 +77,64 @@ export function buildTraceFieldSamples(
   return samples;
 }
 
+export function buildSolverFieldSamples(
+  geometry: RfGeometry,
+  fieldSolve: FieldSolverResult = solveMicrostripFiniteDifference(geometry, {
+    cellsX: 64,
+    cellsY: 48,
+    maxIterations: 7_000,
+    tolerance: 8e-5
+  }),
+  options: {
+    samplesAlongTrace?: number;
+    samplesAcrossSection?: number;
+    heightLevels?: number;
+  } = {}
+): FieldSample[] {
+  const trace = geometry.traces[0];
+  if (!trace) return [];
+
+  const samplesAlongTrace = options.samplesAlongTrace ?? 19;
+  const samplesAcrossSection = options.samplesAcrossSection ?? 12;
+  const heightLevels = options.heightLevels ?? 5;
+  const samples: FieldSample[] = [];
+  const maxField = Math.max(fieldSolve.field.maxElectricFieldVm, 1);
+  const yStartM = 0;
+  const yStopM = Math.min(fieldSolve.grid.domainHeightM, geometry.stack.substrateHeightM * 2.4);
+
+  for (let ix = 0; ix < samplesAlongTrace; ix += 1) {
+    const xFraction = samplesAlongTrace === 1 ? 0.5 : ix / (samplesAlongTrace - 1);
+    const traceXM = trace.xM + trace.lengthM * xFraction;
+    for (let iz = 0; iz < samplesAcrossSection; iz += 1) {
+      const zFraction = samplesAcrossSection === 1 ? 0.5 : iz / (samplesAcrossSection - 1);
+      const crossSectionXM = zFraction * fieldSolve.grid.domainWidthM;
+      for (let iy = 0; iy < heightLevels; iy += 1) {
+        const yFraction = heightLevels === 1 ? 0.5 : iy / (heightLevels - 1);
+        const yM = yStartM + (yStopM - yStartM) * yFraction;
+        const field = sampleFieldGrid(fieldSolve, crossSectionXM, yM);
+        const magnitude = Math.hypot(field.exVm, field.eyVm);
+        if (magnitude <= maxField * 0.015) continue;
+
+        samples.push({
+          id: `solver-field-${ix}-${iz}-${iy}`,
+          xM: traceXM,
+          yM,
+          zM: crossSectionXM,
+          amplitude: Math.min(1, magnitude / maxField),
+          phaseRad: xFraction * Math.PI * 2,
+          direction: normalizeDirection({
+            x: 0,
+            y: field.eyVm,
+            z: field.exVm
+          })
+        });
+      }
+    }
+  }
+
+  return samples;
+}
+
 export function sampleInstantaneousField(sample: FieldSample, animationPhaseRad: number): number {
   return sample.amplitude * Math.sin(animationPhaseRad - sample.phaseRad);
 }
@@ -120,5 +179,19 @@ function normalizeDirection(vector: { x: number; y: number; z: number }): FieldS
     x: vector.x / length,
     y: vector.y / length,
     z: vector.z / length
+  };
+}
+
+function sampleFieldGrid(
+  fieldSolve: FieldSolverResult,
+  xM: number,
+  yM: number
+): { exVm: number; eyVm: number } {
+  const x = Math.max(0, Math.min(fieldSolve.grid.cellsX - 1, Math.round(xM / fieldSolve.grid.dxM)));
+  const y = Math.max(0, Math.min(fieldSolve.grid.cellsY - 1, Math.round(yM / fieldSolve.grid.dyM)));
+  const index = y * fieldSolve.grid.cellsX + x;
+  return {
+    exVm: fieldSolve.field.electricFieldXVm[index] ?? 0,
+    eyVm: fieldSolve.field.electricFieldYVm[index] ?? 0
   };
 }

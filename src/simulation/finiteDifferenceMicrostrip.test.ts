@@ -34,6 +34,10 @@ describe("finite-difference microstrip field solver", () => {
     ).toBeLessThan(0.35);
     expect(numerical.effectiveRelativePermittivity).toBeGreaterThan(1);
     expect(numerical.effectiveRelativePermittivity).toBeLessThan(geometry.stack.substrate.relativePermittivity);
+    expect(numerical.field.potentialV).toHaveLength(numerical.grid.cellsX * numerical.grid.cellsY);
+    expect(numerical.field.electricFieldXVm).toHaveLength(numerical.field.potentialV.length);
+    expect(numerical.field.maxElectricFieldVm).toBeGreaterThan(0);
+    expect(numerical.grid.traceMinXM).toBe(geometry.traces[0].yM);
   });
 
   it("responds physically to trace-width changes", () => {

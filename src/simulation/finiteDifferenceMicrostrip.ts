@@ -20,6 +20,12 @@ export type FieldSolverResult = {
   iterations: number;
   residual: number;
   converged: boolean;
+  field: {
+    potentialV: number[];
+    electricFieldXVm: number[];
+    electricFieldYVm: number[];
+    maxElectricFieldVm: number;
+  };
   grid: {
     cellsX: number;
     cellsY: number;
@@ -27,6 +33,9 @@ export type FieldSolverResult = {
     dyM: number;
     domainWidthM: number;
     domainHeightM: number;
+    traceMinXM: number;
+    traceMaxXM: number;
+    substrateHeightM: number;
   };
 };
 
@@ -89,14 +98,48 @@ export function solveMicrostripFiniteDifference(
     iterations: Math.max(dielectricSolve.iterations, airSolve.iterations),
     residual: Math.max(dielectricSolve.residual, airSolve.residual),
     converged: dielectricSolve.converged && airSolve.converged,
+    field: buildFieldGrid(config, dielectricSolve.potential),
     grid: {
       cellsX: config.cellsX,
       cellsY: config.cellsY,
       dxM: config.boardWidthM / (config.cellsX - 1),
       dyM: config.domainHeightM / (config.cellsY - 1),
       domainWidthM: config.boardWidthM,
-      domainHeightM: config.domainHeightM
+      domainHeightM: config.domainHeightM,
+      traceMinXM: config.traceMinXM,
+      traceMaxXM: config.traceMaxXM,
+      substrateHeightM: config.substrateHeightM
     }
+  };
+}
+
+function buildFieldGrid(config: SolverConfig, potential: Float64Array): FieldSolverResult["field"] {
+  const electricFieldXVm = new Array<number>(potential.length).fill(0);
+  const electricFieldYVm = new Array<number>(potential.length).fill(0);
+  const dx = config.boardWidthM / (config.cellsX - 1);
+  const dy = config.domainHeightM / (config.cellsY - 1);
+  let maxElectricFieldVm = 0;
+
+  for (let y = 0; y < config.cellsY; y += 1) {
+    for (let x = 0; x < config.cellsX; x += 1) {
+      const left = potential[gridIndex(Math.max(0, x - 1), y, config.cellsX)];
+      const right = potential[gridIndex(Math.min(config.cellsX - 1, x + 1), y, config.cellsX)];
+      const down = potential[gridIndex(x, Math.max(0, y - 1), config.cellsX)];
+      const up = potential[gridIndex(x, Math.min(config.cellsY - 1, y + 1), config.cellsX)];
+      const ex = -(right - left) / (x === 0 || x === config.cellsX - 1 ? dx : 2 * dx);
+      const ey = -(up - down) / (y === 0 || y === config.cellsY - 1 ? dy : 2 * dy);
+      const index = gridIndex(x, y, config.cellsX);
+      electricFieldXVm[index] = ex;
+      electricFieldYVm[index] = ey;
+      maxElectricFieldVm = Math.max(maxElectricFieldVm, Math.hypot(ex, ey));
+    }
+  }
+
+  return {
+    potentialV: Array.from(potential),
+    electricFieldXVm,
+    electricFieldYVm,
+    maxElectricFieldVm
   };
 }
 

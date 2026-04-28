@@ -3,6 +3,7 @@ import { defaultGeometry } from "../domain/geometry";
 import { copper, defaultSubstrate } from "../domain/materials";
 import {
   buildConnectorProbeFrames,
+  buildSolverFieldSamples,
   buildTraceFieldSamples,
   sampleInstantaneousField
 } from "./fieldSampling";
@@ -26,6 +27,18 @@ describe("field sampling", () => {
 
   it("uses a denser default field sample grid", () => {
     expect(buildTraceFieldSamples(defaultGeometry(defaultSubstrate, copper))).toHaveLength(23 * 9 * 4);
+  });
+
+  it("projects finite-difference solver fields into 3D samples", () => {
+    const samples = buildSolverFieldSamples(defaultGeometry(defaultSubstrate, copper), undefined, {
+      samplesAlongTrace: 3,
+      samplesAcrossSection: 4,
+      heightLevels: 3
+    });
+
+    expect(samples.length).toBeGreaterThan(0);
+    expect(samples[0].amplitude).toBeGreaterThan(0);
+    expect(Math.hypot(samples[0].direction.x, samples[0].direction.y, samples[0].direction.z)).toBeCloseTo(1);
   });
 
   it("samples signed instantaneous field values from phase", () => {
