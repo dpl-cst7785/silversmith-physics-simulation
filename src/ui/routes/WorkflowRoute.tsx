@@ -1,4 +1,4 @@
-import { Play, Upload } from "lucide-react";
+import { Download, Play, Upload } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 import { mToMm, mmToM, type RfGeometry } from "../../domain/geometry";
 import {
@@ -9,6 +9,7 @@ import {
 import { parseTouchstone, type TouchstoneData } from "../../physics/sParameters";
 import type { GeometryPreset } from "../../physics/geometryPresets";
 import type { FrequencySweep, ValidationResult } from "../../validation/engine";
+import { downloadValidationReport } from "../downloadValidationReport";
 import { NumberField } from "./GeometryRoute";
 import { SParameterPlot, ValidationMetrics, ValidationReport } from "./ResultsRoute";
 
@@ -53,6 +54,7 @@ export function WorkflowRoute({
 }: Props) {
   const trace = geometry.traces[0];
   const model = getAnalyticalModelDescriptor(modelId);
+  const canExport = Boolean(validation && !isValidationStale);
 
   return (
     <section className="route">
@@ -61,10 +63,21 @@ export function WorkflowRoute({
           <p className="eyebrow">Functional physics workflow</p>
           <h1>Geometry - physics - simulation - validation</h1>
         </div>
-        <button className="primary-button" onClick={onRun} disabled={runStatus === "running"}>
-          <Play size={18} />
-          <span>{runStatus === "running" ? "Running..." : "Run validation"}</span>
-        </button>
+        <div className="header-actions">
+          <button
+            className="secondary-button"
+            onClick={() => validation && downloadValidationReport({ geometry, validation, touchstone })}
+            disabled={!canExport}
+            title={canExport ? "Export validation report JSON" : "Run validation before exporting"}
+          >
+            <Download size={18} />
+            <span>Export report</span>
+          </button>
+          <button className="primary-button" onClick={onRun} disabled={runStatus === "running"}>
+            <Play size={18} />
+            <span>{runStatus === "running" ? "Running..." : "Run validation"}</span>
+          </button>
+        </div>
       </header>
       <div className="workflow-grid">
         <fieldset>

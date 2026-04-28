@@ -1,5 +1,6 @@
-import { Upload } from "lucide-react";
+import { Download, Upload } from "lucide-react";
 import { useState } from "react";
+import type { RfGeometry } from "../../domain/geometry";
 import {
   deriveSParameterMetrics,
   insertionLossDb,
@@ -9,16 +10,19 @@ import {
   type TouchstoneData
 } from "../../physics/sParameters";
 import type { ValidationResult } from "../../validation/engine";
+import { downloadValidationReport } from "../downloadValidationReport";
 
 type Props = {
+  geometry: RfGeometry;
   validation: ValidationResult | null;
   isValidationStale: boolean;
   touchstone: TouchstoneData | null;
   onTouchstoneChange: (touchstone: TouchstoneData | null) => void;
 };
 
-export function ResultsRoute({ validation, isValidationStale, touchstone, onTouchstoneChange }: Props) {
+export function ResultsRoute({ geometry, validation, isValidationStale, touchstone, onTouchstoneChange }: Props) {
   const [parseError, setParseError] = useState<string | null>(null);
+  const canExport = Boolean(validation && !isValidationStale);
 
   async function handleUpload(file: File | undefined) {
     if (!file) return;
@@ -38,11 +42,22 @@ export function ResultsRoute({ validation, isValidationStale, touchstone, onTouc
           <p className="eyebrow">S-parameters and validation</p>
           <h1>Analytical vs simulated</h1>
         </div>
-        <label className="upload-button">
-          <Upload size={18} />
-          <span>Upload Touchstone</span>
-          <input type="file" accept=".s1p,.s2p" onChange={(event) => void handleUpload(event.target.files?.[0])} />
-        </label>
+        <div className="header-actions">
+          <button
+            className="secondary-button"
+            onClick={() => validation && downloadValidationReport({ geometry, validation, touchstone })}
+            disabled={!canExport}
+            title={canExport ? "Export validation report JSON" : "Run validation before exporting"}
+          >
+            <Download size={18} />
+            <span>Export report</span>
+          </button>
+          <label className="upload-button">
+            <Upload size={18} />
+            <span>Upload Touchstone</span>
+            <input type="file" accept=".s1p,.s2p" onChange={(event) => void handleUpload(event.target.files?.[0])} />
+          </label>
+        </div>
       </header>
       {parseError && <p className="error-text">{parseError}</p>}
       {isValidationStale && <p className="stale-text">Inputs changed after the last run. Re-run validation before using these results.</p>}

@@ -145,6 +145,7 @@ export function App() {
         )}
         {activeRoute.path === "/results" && (
           <ResultsRoute
+            geometry={geometry}
             validation={validation}
             isValidationStale={isValidationStale}
             touchstone={touchstone}
