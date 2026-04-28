@@ -225,12 +225,12 @@ export function buildSolverFieldVolume(
     minNormalizedMagnitude?: number;
   } = {}
 ): FieldVolume {
-  const samplesAlongTrace = options.samplesAlongTrace ?? 64;
-  const samplesAcrossSection = options.samplesAcrossSection ?? 34;
-  const heightLevels = options.heightLevels ?? 24;
+  const samplesAlongTrace = options.samplesAlongTrace ?? 52;
+  const samplesAcrossSection = options.samplesAcrossSection ?? 26;
+  const heightLevels = options.heightLevels ?? 18;
   const lengthM = options.lengthM ?? fieldSolve.grid.domainWidthM;
   const xOffsetM = options.xOffsetM ?? 0;
-  const minNormalizedMagnitude = options.minNormalizedMagnitude ?? 0.018;
+  const minNormalizedMagnitude = options.minNormalizedMagnitude ?? 0.035;
   const maxMagnitudeVm = Math.max(fieldSolve.field.maxElectricFieldVm, 1);
   const positions: number[] = [];
   const colors: number[] = [];
