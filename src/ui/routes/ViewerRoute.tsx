@@ -4,11 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BufferGeometry,
   Color,
+  DoubleSide,
   Float32BufferAttribute,
   Group,
   Mesh,
   MeshStandardMaterial,
-  Points,
   Quaternion,
   ShaderMaterial,
   Uint16BufferAttribute,
@@ -18,13 +18,11 @@ import { mToMm, type RfGeometry } from "../../domain/geometry";
 import {
   buildConnectorProbeFrames,
   buildPowerFlowSamples,
-  buildSolverFieldVolume,
   buildTraceFieldSamples,
   estimateFieldSolveMs,
   sampleInstantaneousField,
   type ConnectorProbeFrame,
   type FieldSample,
-  type FieldVolume,
   type PowerFlowSample
 } from "../../fields/fieldSampling";
 import { buildExtrudedGeometryMesh, type ExtrudedMeshSolid } from "../../geometry/extrudedMesh";
@@ -44,6 +42,13 @@ type FieldVisualSettings = {
   spacing: number;
   volumeHeight: number;
   powerFlow: boolean;
+};
+
+type FieldCellGrid = {
+  positions: number[];
+  relevance: number[];
+  phases: number[];
+  indices: number[];
 };
 
 export function ViewerRoute({ geometry, modelId }: Props) {
@@ -254,17 +259,9 @@ function ExtrudedMeshScene({
     () => fieldMode === "solver" ? [] : buildTraceFieldSamples(geometry),
     [fieldMode, geometry]
   );
-  const fieldVolume = useMemo(
-    () => buildSolverFieldVolume(fieldSolve, {
-      lengthM: trace?.lengthM ?? geometry.boardLengthM,
-      xOffsetM: trace?.xM ?? 0,
-      samplesAlongTrace: scaledSampleCount(52, visualSettings.pointScale, visualSettings.spacing),
-      samplesAcrossSection: scaledSampleCount(26, visualSettings.pointScale, visualSettings.spacing),
-      heightLevels: scaledSampleCount(18, visualSettings.pointScale, visualSettings.spacing),
-      spacingMultiplier: visualSettings.spacing,
-      volumeHeightMultiplier: visualSettings.volumeHeight
-    }),
-    [fieldSolve, geometry.boardLengthM, trace?.lengthM, trace?.xM, visualSettings]
+  const fieldCellGrid = useMemo(
+    () => buildFieldCellGrid(geometry, fieldSolve, visualSettings),
+    [fieldSolve, geometry, visualSettings]
   );
   const powerFlowSamples = useMemo(() => buildPowerFlowSamples(geometry), [geometry]);
 
@@ -275,7 +272,7 @@ function ExtrudedMeshScene({
       ))}
       {fieldMode === "solver" && (
         <>
-          <FieldVolumeCloud volume={fieldVolume} visualSettings={visualSettings} />
+          <FieldCellGridMesh grid={fieldCellGrid} visualSettings={visualSettings} />
           {visualSettings.powerFlow && <PowerFlowLayer samples={powerFlowSamples} />}
         </>
       )}
@@ -315,95 +312,165 @@ function scaledSampleCount(base: number, pointScale: number, spacing: number): n
   return Math.max(4, Math.round((base * pointScale) / spacing));
 }
 
-function FieldVolumeCloud({
-  volume,
+function FieldCellGridMesh({
+  grid,
   visualSettings
 }: {
-  volume: FieldVolume;
+  grid: FieldCellGrid;
   visualSettings: FieldVisualSettings;
 }) {
-  const pointsRef = useRef<Points>(null);
   const materialRef = useRef<ShaderMaterial>(null);
   const geometry = useMemo(() => {
     const bufferGeometry = new BufferGeometry();
-    const positionsMm = volume.positions.map((value) => mToMm(value));
-    bufferGeometry.setAttribute("position", new Float32BufferAttribute(positionsMm, 3));
-    bufferGeometry.setAttribute("color", new Float32BufferAttribute(volume.colors, 3));
-    bufferGeometry.setAttribute("fieldDirection", new Float32BufferAttribute(volume.directions, 3));
-    bufferGeometry.setAttribute("fieldAmplitude", new Float32BufferAttribute(volume.amplitudes, 1));
-    bufferGeometry.setAttribute("fieldPhase", new Float32BufferAttribute(volume.phases, 1));
+    bufferGeometry.setAttribute("position", new Float32BufferAttribute(grid.positions, 3));
+    bufferGeometry.setAttribute("cellRelevance", new Float32BufferAttribute(grid.relevance, 1));
+    bufferGeometry.setAttribute("cellPhase", new Float32BufferAttribute(grid.phases, 1));
+    bufferGeometry.setIndex(grid.indices);
+    bufferGeometry.computeVertexNormals();
     return bufferGeometry;
-  }, [volume]);
+  }, [grid]);
 
   useFrame(({ clock }) => {
     if (materialRef.current) materialRef.current.uniforms.time.value = clock.elapsedTime;
   });
 
   return (
-    <points ref={pointsRef} geometry={geometry}>
+    <mesh geometry={geometry}>
       <shaderMaterial
         ref={materialRef}
         transparent
         depthWrite={false}
+        side={DoubleSide}
         uniforms={{
           time: { value: 0 },
-          pointSize: { value: 6.6 * visualSettings.spacing },
-          opacityScale: { value: visualSettings.opacity },
-          traceStartMm: { value: mToMm(volume.traceStartM) },
-          traceLengthMm: { value: Math.max(0.001, mToMm(volume.traceLengthM)) }
+          opacityScale: { value: visualSettings.opacity }
         }}
-        vertexShader={fieldVolumeVertexShader}
-        fragmentShader={fieldVolumeFragmentShader}
+        vertexShader={fieldCellVertexShader}
+        fragmentShader={fieldCellFragmentShader}
       />
-    </points>
+    </mesh>
   );
 }
 
-const fieldVolumeVertexShader = `
-  attribute vec3 color;
-  attribute vec3 fieldDirection;
-  attribute float fieldAmplitude;
-  attribute float fieldPhase;
-  varying float vAmplitude;
+function buildFieldCellGrid(
+  geometry: RfGeometry,
+  fieldSolve: FieldSolverResult,
+  visualSettings: FieldVisualSettings
+): FieldCellGrid {
+  const trace = geometry.traces[0];
+  if (!trace) return { positions: [], relevance: [], phases: [], indices: [] };
+
+  const lengthSlices = scaledSampleCount(16, visualSettings.pointScale, visualSettings.spacing);
+  const cellStride = Math.max(1, Math.round(visualSettings.spacing / Math.max(0.35, visualSettings.pointScale)));
+  const yLimitM = Math.min(fieldSolve.grid.domainHeightM, fieldSolve.grid.substrateHeightM * visualSettings.volumeHeight);
+  const maxDisplayMagnitudeVm = Math.max(fieldMagnitudePercentile(fieldSolve, 0.96), fieldSolve.field.maxElectricFieldVm * 0.18, 1);
+  const positions: number[] = [];
+  const relevance: number[] = [];
+  const phases: number[] = [];
+  const indices: number[] = [];
+
+  for (let slice = 0; slice < lengthSlices; slice += 1) {
+    const xFraction = lengthSlices === 1 ? 0.5 : slice / (lengthSlices - 1);
+    const xM = trace.xM + trace.lengthM * xFraction;
+    const phase = xFraction * Math.PI * 2;
+
+    for (let gy = 0; gy < fieldSolve.grid.cellsY - 1; gy += cellStride) {
+      const y0M = gy * fieldSolve.grid.dyM;
+      const y1M = Math.min(yLimitM, (gy + cellStride) * fieldSolve.grid.dyM);
+      if (y0M >= yLimitM) continue;
+
+      for (let gx = 0; gx < fieldSolve.grid.cellsX - 1; gx += cellStride) {
+        const z0M = gx * fieldSolve.grid.dxM;
+        const z1M = Math.min(fieldSolve.grid.domainWidthM, (gx + cellStride) * fieldSolve.grid.dxM);
+        const centerZM = (z0M + z1M) / 2;
+        const centerYM = (y0M + y1M) / 2;
+        const field = sampleFieldCell(fieldSolve, centerZM, centerYM);
+        const normalized = Math.min(1, field / maxDisplayMagnitudeVm);
+        const weight = normalized * microstripCellRegionWeight(fieldSolve, centerZM, centerYM);
+        if (weight < 0.035) continue;
+
+        const cellRelevance = Math.min(1, Math.pow(weight, 0.62));
+        const vertexBase = positions.length / 3;
+        positions.push(
+          mToMm(xM), mToMm(y0M), mToMm(z0M),
+          mToMm(xM), mToMm(y1M), mToMm(z0M),
+          mToMm(xM), mToMm(y1M), mToMm(z1M),
+          mToMm(xM), mToMm(y0M), mToMm(z1M)
+        );
+        relevance.push(cellRelevance, cellRelevance, cellRelevance, cellRelevance);
+        phases.push(phase, phase, phase, phase);
+        indices.push(vertexBase, vertexBase + 1, vertexBase + 2, vertexBase, vertexBase + 2, vertexBase + 3);
+      }
+    }
+  }
+
+  return { positions, relevance, phases, indices };
+}
+
+function sampleFieldCell(fieldSolve: FieldSolverResult, xM: number, yM: number): number {
+  const x = Math.max(0, Math.min(fieldSolve.grid.cellsX - 1, Math.round(xM / fieldSolve.grid.dxM)));
+  const y = Math.max(0, Math.min(fieldSolve.grid.cellsY - 1, Math.round(yM / fieldSolve.grid.dyM)));
+  const index = y * fieldSolve.grid.cellsX + x;
+  return Math.hypot(
+    fieldSolve.field.electricFieldXVm[index] ?? 0,
+    fieldSolve.field.electricFieldYVm[index] ?? 0
+  );
+}
+
+function microstripCellRegionWeight(fieldSolve: FieldSolverResult, crossSectionXM: number, yM: number): number {
+  const traceMin = fieldSolve.grid.traceMinXM;
+  const traceMax = fieldSolve.grid.traceMaxXM;
+  const traceWidth = Math.max(traceMax - traceMin, fieldSolve.grid.dxM);
+  const substrateHeight = fieldSolve.grid.substrateHeightM;
+  const insideTraceProjection = crossSectionXM >= traceMin && crossSectionXM <= traceMax;
+  const distanceToTrace = insideTraceProjection
+    ? 0
+    : Math.min(Math.abs(crossSectionXM - traceMin), Math.abs(crossSectionXM - traceMax));
+  const distanceToEdge = Math.min(Math.abs(crossSectionXM - traceMin), Math.abs(crossSectionXM - traceMax));
+  const underTrace = insideTraceProjection && yM <= substrateHeight ? 1 : 0;
+  const edgeFringe = Math.exp(-distanceToEdge / (traceWidth * 0.42));
+  const lateralDecay = Math.exp(-distanceToTrace / (traceWidth * 1.1));
+  const airDecay = yM <= substrateHeight ? 1 : Math.exp(-(yM - substrateHeight) / (substrateHeight * 0.28));
+  const substrateBias = yM <= substrateHeight ? 1 : 0.3;
+  return Math.min(1, Math.max(underTrace, edgeFringe * 0.92, lateralDecay * 0.3) * airDecay * substrateBias);
+}
+
+function fieldMagnitudePercentile(fieldSolve: FieldSolverResult, percentile: number): number {
+  const values = fieldSolve.field.electricFieldXVm.map((exVm, index) =>
+    Math.hypot(exVm, fieldSolve.field.electricFieldYVm[index] ?? 0)
+  );
+  values.sort((a, b) => a - b);
+  const index = Math.max(0, Math.min(values.length - 1, Math.floor((values.length - 1) * percentile)));
+  return values[index] ?? 1;
+}
+
+const fieldCellVertexShader = `
+  attribute float cellRelevance;
+  attribute float cellPhase;
+  varying float vRelevance;
   varying float vPhase;
-  varying vec3 vColor;
-  uniform float pointSize;
-  uniform float time;
-  uniform float traceStartMm;
-  uniform float traceLengthMm;
 
   void main() {
-    vAmplitude = fieldAmplitude;
-    vPhase = fieldPhase;
-    vColor = clamp(color, 0.0, 1.0);
-    vec3 animatedPosition = position;
-    float wave = sin(time * 4.2 - fieldPhase * 2.4);
-    animatedPosition.yz += fieldDirection.yz * wave * (0.9 + fieldAmplitude * 2.2);
-    vec4 mvPosition = modelViewMatrix * vec4(animatedPosition, 1.0);
-    gl_PointSize = pointSize * (0.75 + fieldAmplitude * 1.65) * (300.0 / max(80.0, -mvPosition.z));
-    gl_Position = projectionMatrix * mvPosition;
+    vRelevance = cellRelevance;
+    vPhase = cellPhase;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 
-const fieldVolumeFragmentShader = `
-  varying float vAmplitude;
+const fieldCellFragmentShader = `
+  varying float vRelevance;
   varying float vPhase;
-  varying vec3 vColor;
   uniform float time;
   uniform float opacityScale;
 
   void main() {
-    vec2 uv = gl_PointCoord - vec2(0.5);
-    float radius = length(uv);
-    if (radius > 0.5) discard;
-    float softDisc = smoothstep(0.5, 0.0, radius);
-    float core = smoothstep(0.2, 0.0, radius);
-    float wave = 0.5 + 0.5 * sin(time * 3.2 - vPhase);
+    float signedWave = sin(time * 3.2 - vPhase);
+    float wave = 0.5 + 0.5 * signedWave;
     vec3 red = vec3(1.0, 0.18, 0.1);
     vec3 blue = vec3(0.05, 0.42, 1.0);
-    vec3 fluidColor = mix(blue, red, wave);
-    vec3 color = mix(vColor, fluidColor, 0.82);
-    float alpha = opacityScale * (softDisc * (0.035 + vAmplitude * 0.14) + core * vAmplitude * 0.06);
+    vec3 color = mix(blue, red, wave);
+    float alpha = opacityScale * vRelevance * (0.12 + 0.22 * abs(signedWave));
+    if (alpha < 0.012) discard;
     gl_FragColor = vec4(color, alpha);
   }
 `;
@@ -584,7 +651,7 @@ function FieldVisualControls({
       <div className="section-heading-row">
         <div>
           <h2>Field fluid visual tuning</h2>
-          <p className="field-note">Visual-only controls for the solver-derived particle medium.</p>
+          <p className="field-note">Visual-only controls for solver grid cells; opacity follows field relevance.</p>
         </div>
         <button
           className="secondary-button"
@@ -603,7 +670,7 @@ function FieldVisualControls({
         onChange={(opacity) => onSettingsChange({ ...settings, opacity })}
       />
       <VisualSlider
-        label="Number of points"
+        label="Grid slices"
         value={settings.pointScale}
         min={0.25}
         max={2.5}
@@ -612,7 +679,7 @@ function FieldVisualControls({
         onChange={(pointScale) => onSettingsChange({ ...settings, pointScale })}
       />
       <VisualSlider
-        label="Particle spacing"
+        label="Cell spacing"
         value={settings.spacing}
         min={0.45}
         max={2.5}
