@@ -23,6 +23,7 @@ transmission-line geometry + materials -> analytical model -> mock S-parameters 
 - Local run history for selecting prior validation records and restoring their geometry, sweep, analytical results, mock simulation output, and validation metrics.
 - Latest-run comparison for Z0, effective dielectric constant, estimated loss, propagation delay, and electrical length deltas.
 - Trace-width sweep studies that use the analytical model to find the width closest to a target impedance.
+- Generated 3D extruded mesh solids for substrate, ground plane, traces, vias, and ports. The viewer and mock solver metadata are driven from this mesh layer rather than hardcoded display constants.
 - Touchstone `.s1p` and `.s2p` parser for frequency units, real/imaginary, magnitude/angle, and dB/angle formats.
 
 ## Microstrip Model Assumptions
@@ -77,7 +78,7 @@ The UI shows common engineering units such as millimeters and gigahertz, then co
 - `/workflow`: explicit run workflow for analytical model selection, geometry, material, frequency sweep, optional imported Touchstone, analytical result, mock simulation, validation report, S-parameter plot, and 3D view.
 - `/circuit`: block-based RF circuit canvas scaffold.
 - `/geometry`: stackup and material editor.
-- `/viewer`: CAD-style 3D view driven by the same geometry object used by the physics model.
+- `/viewer`: CAD-style 3D extruded mesh view driven by the same geometry object used by the physics model.
 - `/results`: S-parameter upload, simulation table, plot, and validation report.
 
 ## Tech Stack
@@ -123,6 +124,7 @@ Copy `.env.example` to `.env.local` for local overrides.
 ## Architecture
 
 - `src/domain`: SI-unit geometry, material, circuit, trace, port, via, and stackup types.
+- `src/geometry`: generated extruded mesh solids derived from editable RF geometry.
 - `src/physics`: analytical RF models and Touchstone utilities.
 - `src/simulation`: solver interfaces, job lifecycle types, metadata, and mock S-parameter generation.
 - `src/validation`: comparison engine for analytical, simulated, and imported S-parameter results.

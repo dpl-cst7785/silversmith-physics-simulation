@@ -1,4 +1,5 @@
 import type { RfGeometry } from "../domain/geometry";
+import { buildExtrudedGeometryMesh, type ExtrudedGeometryMesh } from "../geometry/extrudedMesh";
 import {
   calculateAnalyticalModelForGeometry,
   type AnalyticalModelId,
@@ -29,6 +30,7 @@ export type SimulationMetadata = {
   runtimeMs: number;
   convergenceStatus: ConvergenceStatus;
   assumptions: string[];
+  meshSummary: ExtrudedGeometryMesh["summary"];
 };
 
 export type SimulationResult = {
@@ -38,6 +40,7 @@ export type SimulationResult = {
 
 export type SolverInput = {
   geometry: RfGeometry;
+  mesh?: ExtrudedGeometryMesh;
   frequenciesHz: number[];
   referenceImpedanceOhms?: number;
   modelId?: AnalyticalModelId;
@@ -67,6 +70,7 @@ export class MockTransmissionLineSolver implements SolverAdapter {
     if (!trace) throw new Error("MockTransmissionLineSolver requires one trace.");
 
     const modelId = input.modelId ?? "microstrip";
+    const mesh = input.mesh ?? buildExtrudedGeometryMesh(input.geometry);
     const referenceImpedanceOhms = input.referenceImpedanceOhms ?? input.geometry.ports[0]?.impedanceOhms ?? 50;
 
     const points = input.frequenciesHz.map((frequencyHz): SParameterPoint => {
@@ -93,8 +97,10 @@ export class MockTransmissionLineSolver implements SolverAdapter {
         solverName: this.name,
         runtimeMs: Math.max(0.01, performance.now() - started),
         convergenceStatus: "not-applicable",
+        meshSummary: mesh.summary,
         assumptions: [
           `S-parameters are generated from the analytical ${modelId} result.`,
+          `Geometry mesh contains ${mesh.summary.solids} extruded solids and ${mesh.summary.faces} faces.`,
           "Mismatch is derived from Z0 relative to the selected port reference impedance.",
           "Insertion loss uses the analytical estimated dielectric and conductor loss.",
           "No meshing, radiation, launch discontinuity, coupling, or enclosure effects are modeled."

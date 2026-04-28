@@ -287,7 +287,12 @@ function SimulationTable({ validation }: { validation: ValidationResult | null }
           })}
         </tbody>
       </table>
-      {validation && <p className="assumptions">{validation.simulation.metadata.solverName}: {validation.simulation.metadata.assumptions.join(" ")}</p>}
+      {validation && (
+        <p className="assumptions">
+          {validation.simulation.metadata.solverName}: mesh {validation.simulation.metadata.meshSummary.solids} solids,{" "}
+          {validation.simulation.metadata.meshSummary.faces} faces. {validation.simulation.metadata.assumptions.join(" ")}
+        </p>
+      )}
     </div>
   );
 }

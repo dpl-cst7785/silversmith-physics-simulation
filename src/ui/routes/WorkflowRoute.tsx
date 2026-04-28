@@ -1,6 +1,7 @@
 import { Download, History, Play, Trash2, Upload } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 import { mToMm, mmToM, type RfGeometry } from "../../domain/geometry";
+import { buildExtrudedGeometryMesh } from "../../geometry/extrudedMesh";
 import {
   analyticalModels,
   getAnalyticalModelDescriptor,
@@ -64,6 +65,7 @@ export function WorkflowRoute({
   const trace = geometry.traces[0];
   const model = getAnalyticalModelDescriptor(modelId);
   const canExport = Boolean(validation && !isValidationStale);
+  const meshSummary = buildExtrudedGeometryMesh(geometry).summary;
 
   return (
     <section className="route">
@@ -141,6 +143,12 @@ export function WorkflowRoute({
       </div>
       {runError && <p className="error-text">{runError}</p>}
       <RunSummary validation={validation} runStatus={runStatus} touchstone={touchstone} isValidationStale={isValidationStale} />
+      <div className="run-summary">
+        <span>Mesh solids: {meshSummary.solids}</span>
+        <span>Mesh vertices: {meshSummary.vertices}</span>
+        <span>Mesh faces: {meshSummary.faces}</span>
+        <span>Conductors: {meshSummary.conductorSolids}</span>
+      </div>
       {isValidationStale && <p className="stale-text">Inputs changed after the last run. Re-run validation before using these results.</p>}
       <ValidationMetrics validation={validation} isValidationStale={isValidationStale} />
       <ModelVariance validation={validation} />

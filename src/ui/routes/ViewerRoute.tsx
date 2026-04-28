@@ -1,6 +1,8 @@
 import { OrbitControls, Text } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
+import { BufferGeometry, Float32BufferAttribute, Uint16BufferAttribute } from "three";
 import { mToMm, type RfGeometry } from "../../domain/geometry";
+import { buildExtrudedGeometryMesh, type ExtrudedMeshSolid } from "../../geometry/extrudedMesh";
 import { getAnalyticalModelDescriptor, type AnalyticalModelId } from "../../physics/analyticalModels";
 
 type Props = {
@@ -10,13 +12,19 @@ type Props = {
 
 export function ViewerRoute({ geometry, modelId }: Props) {
   const model = getAnalyticalModelDescriptor(modelId);
+  const mesh = buildExtrudedGeometryMesh(geometry);
 
   return (
     <section className="route viewer-route">
       <header className="route-header">
         <div>
-          <p className="eyebrow">3D CAD visualization</p>
+          <p className="eyebrow">3D extruded mesh</p>
           <h1>{model.label}</h1>
+        </div>
+        <div className="mesh-summary">
+          <span>{mesh.summary.solids} solids</span>
+          <span>{mesh.summary.vertices} vertices</span>
+          <span>{mesh.summary.faces} faces</span>
         </div>
       </header>
       <div className="viewer-shell">
@@ -24,7 +32,7 @@ export function ViewerRoute({ geometry, modelId }: Props) {
           <color attach="background" args={["#eef4f1"]} />
           <ambientLight intensity={0.7} />
           <directionalLight position={[12, 20, 10]} intensity={1.2} />
-          <TransmissionLineScene geometry={geometry} modelId={modelId} />
+          <ExtrudedMeshScene geometry={geometry} solids={mesh.solids} modelId={modelId} />
           <OrbitControls makeDefault enableDamping />
         </Canvas>
       </div>
@@ -32,97 +40,72 @@ export function ViewerRoute({ geometry, modelId }: Props) {
   );
 }
 
-function TransmissionLineScene({ geometry, modelId }: Props) {
-  return modelId === "stripline" ? <StriplineScene geometry={geometry} modelId={modelId} /> : <MicrostripScene geometry={geometry} modelId={modelId} />;
-}
-
-function MicrostripScene({ geometry }: Props) {
-  const dims = sceneDimensions(geometry);
+function ExtrudedMeshScene({
+  geometry,
+  solids,
+  modelId
+}: {
+  geometry: RfGeometry;
+  solids: ExtrudedMeshSolid[];
+  modelId: AnalyticalModelId;
+}) {
+  const boardLengthMm = mToMm(geometry.boardLengthM);
+  const substrateHeightMm = mToMm(geometry.stack.substrateHeightM);
+  const boardWidthMm = mToMm(geometry.boardWidthM);
+  const trace = geometry.traces[0];
+  const model = getAnalyticalModelDescriptor(modelId);
 
   return (
-    <group position={[-dims.boardLength / 2, -dims.substrateHeight / 2, -dims.boardWidth / 2]}>
-      <SubstrateBlock dims={dims} y={0} />
-      {geometry.stack.hasGroundPlane && <GroundPlane dims={dims} y={-dims.substrateHeight / 2 - 0.08} />}
-      <TraceBlock dims={dims} y={dims.substrateHeight / 2 + dims.conductorHeight / 2} />
-      <Ports geometry={geometry} y={dims.substrateHeight / 2 + 1.2} />
-      <Vias geometry={geometry} height={dims.substrateHeight + 0.4} y={0} />
-      <DimensionLabel text={`${dims.traceLength.toFixed(1)} mm`} position={[dims.traceX + dims.traceLength / 2, dims.substrateHeight + 2.2, dims.traceY - 2.5]} />
-      <DimensionLabel text={`${dims.traceWidth.toFixed(2)} mm`} position={[dims.traceX + dims.traceLength + 3, dims.substrateHeight + 1.4, dims.traceY + dims.traceWidth / 2]} />
+    <group position={[-boardLengthMm / 2, -substrateHeightMm / 2, -boardWidthMm / 2]}>
+      {solids.map((solid) => (
+        <MeshSolid key={solid.id} solid={solid} />
+      ))}
+      {trace && (
+        <>
+          <DimensionLabel
+            text={`${mToMm(trace.lengthM).toFixed(1)} mm`}
+            position={[
+              mToMm(trace.xM + trace.lengthM / 2),
+              substrateHeightMm + 2.2,
+              mToMm(trace.yM) - 2.5
+            ]}
+          />
+          <DimensionLabel
+            text={`${mToMm(trace.widthM).toFixed(2)} mm`}
+            position={[
+              mToMm(trace.xM + trace.lengthM) + 3,
+              substrateHeightMm + 1.4,
+              mToMm(trace.yM + trace.widthM / 2)
+            ]}
+          />
+        </>
+      )}
+      {modelId === "stripline" && (
+        <DimensionLabel
+          text={`b ${substrateHeightMm.toFixed(2)} mm`}
+          position={[boardLengthMm / 2, substrateHeightMm / 2 + 2.4, boardWidthMm / 2]}
+        />
+      )}
+      <DimensionLabel text={model.label} position={[boardLengthMm / 2, substrateHeightMm + 4, boardWidthMm / 2]} />
     </group>
   );
 }
 
-function StriplineScene({ geometry }: Props) {
-  const dims = sceneDimensions(geometry);
+function MeshSolid({ solid }: { solid: ExtrudedMeshSolid }) {
+  const geometry = solidToBufferGeometry(solid);
+  const color = solid.kind === "substrate" ? "#7db7a0" : solid.kind === "port" ? "#243746" : "#b56730";
+  const opacity = solid.kind === "substrate" ? 0.72 : 1;
 
   return (
-    <group position={[-dims.boardLength / 2, -dims.substrateHeight / 2, -dims.boardWidth / 2]}>
-      <SubstrateBlock dims={dims} y={0} />
-      <GroundPlane dims={dims} y={-dims.substrateHeight / 2 - 0.08} />
-      <GroundPlane dims={dims} y={dims.substrateHeight / 2 + 0.08} />
-      <TraceBlock dims={dims} y={0} />
-      <Ports geometry={geometry} y={0.9} />
-      <DimensionLabel text={`b ${dims.substrateHeight.toFixed(2)} mm`} position={[dims.boardLength / 2, dims.substrateHeight / 2 + 2.4, dims.boardWidth / 2]} />
-      <DimensionLabel text={`${dims.traceWidth.toFixed(2)} mm`} position={[dims.traceX + dims.traceLength + 3, 1.8, dims.traceY + dims.traceWidth / 2]} />
-    </group>
-  );
-}
-
-function SubstrateBlock({ dims, y }: { dims: SceneDimensions; y: number }) {
-  return (
-    <mesh position={[dims.boardLength / 2, y, dims.boardWidth / 2]}>
-      <boxGeometry args={[dims.boardLength, dims.substrateHeight, dims.boardWidth]} />
-      <meshStandardMaterial color="#7db7a0" roughness={0.85} transparent opacity={0.72} />
+    <mesh geometry={geometry}>
+      <meshStandardMaterial
+        color={color}
+        metalness={solid.materialRole === "conductor" ? 0.6 : 0.05}
+        roughness={solid.materialRole === "conductor" ? 0.3 : 0.85}
+        transparent={opacity < 1}
+        opacity={opacity}
+      />
     </mesh>
-  );
-}
-
-function GroundPlane({ dims, y }: { dims: SceneDimensions; y: number }) {
-  return (
-    <mesh position={[dims.boardLength / 2, y, dims.boardWidth / 2]}>
-      <boxGeometry args={[dims.boardLength, 0.16, dims.boardWidth]} />
-      <meshStandardMaterial color="#b56730" metalness={0.6} roughness={0.3} />
-    </mesh>
-  );
-}
-
-function TraceBlock({ dims, y }: { dims: SceneDimensions; y: number }) {
-  return (
-    <mesh position={[dims.traceX + dims.traceLength / 2, y, dims.traceY + dims.traceWidth / 2]}>
-      <boxGeometry args={[dims.traceLength, dims.conductorHeight, dims.traceWidth]} />
-      <meshStandardMaterial color="#c47b3d" metalness={0.45} roughness={0.32} />
-    </mesh>
-  );
-}
-
-function Ports({ geometry, y }: { geometry: RfGeometry; y: number }) {
-  return (
-    <>
-      {geometry.ports.map((port) => (
-        <group key={port.id} position={[mToMm(port.xM), y, mToMm(port.yM)]}>
-          <mesh>
-            <cylinderGeometry args={[0.9, 0.9, 1.8, 28]} />
-            <meshStandardMaterial color="#243746" />
-          </mesh>
-          <Text position={[0, 2.1, 0]} fontSize={1.4} color="#1d2934" anchorX="center">
-            {port.label}
-          </Text>
-        </group>
-      ))}
-    </>
-  );
-}
-
-function Vias({ geometry, height, y }: { geometry: RfGeometry; height: number; y: number }) {
-  return (
-    <>
-      {geometry.vias.map((via) => (
-        <mesh key={via.id} position={[mToMm(via.xM), y, mToMm(via.yM)]}>
-          <cylinderGeometry args={[mToMm(via.diameterM) / 2, mToMm(via.diameterM) / 2, height, 32]} />
-          <meshStandardMaterial color="#b56730" metalness={0.6} roughness={0.3} />
-        </mesh>
-      ))}
-    </>
   );
 }
 
@@ -134,18 +117,12 @@ function DimensionLabel({ text, position }: { text: string; position: [number, n
   );
 }
 
-type SceneDimensions = ReturnType<typeof sceneDimensions>;
-
-function sceneDimensions(geometry: RfGeometry) {
-  const trace = geometry.traces[0];
-  return {
-    boardLength: mToMm(geometry.boardLengthM),
-    boardWidth: mToMm(geometry.boardWidthM),
-    substrateHeight: mToMm(geometry.stack.substrateHeightM),
-    conductorHeight: Math.max(mToMm(geometry.stack.conductorThicknessM) * 8, 0.2),
-    traceLength: mToMm(trace.lengthM),
-    traceWidth: mToMm(trace.widthM),
-    traceX: mToMm(trace.xM),
-    traceY: mToMm(trace.yM)
-  };
+function solidToBufferGeometry(solid: ExtrudedMeshSolid): BufferGeometry {
+  const positions = solid.vertices.flatMap((vertex) => [mToMm(vertex.xM), mToMm(vertex.yM), mToMm(vertex.zM)]);
+  const indices = solid.faces.flatMap(([a, b, c, d]) => [a, b, c, a, c, d]);
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setIndex(new Uint16BufferAttribute(indices, 1));
+  geometry.computeVertexNormals();
+  return geometry;
 }

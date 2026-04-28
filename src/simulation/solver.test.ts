@@ -15,6 +15,8 @@ describe("MockMicrostripSolver", () => {
 
     expect(result.metadata.solverName).toBe("mock-transmission-line-quasi-static");
     expect(result.metadata.convergenceStatus).toBe("not-applicable");
+    expect(result.metadata.meshSummary.solids).toBeGreaterThan(0);
+    expect(result.metadata.assumptions[1]).toContain("Geometry mesh");
     expect(result.points).toHaveLength(3);
     expect(result.points[0].s11).toHaveProperty("real");
     expect(result.points[0].s21).toHaveProperty("imaginary");
