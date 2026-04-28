@@ -6,9 +6,11 @@ import {
   getAnalyticalModelDescriptor,
   type AnalyticalModelId
 } from "../../physics/analyticalModels";
+import { runTraceWidthSweep, type TraceWidthSweepResult } from "../../physics/traceWidthSweep";
 import { parseTouchstone, type TouchstoneData } from "../../physics/sParameters";
 import type { GeometryPreset } from "../../physics/geometryPresets";
 import type { FrequencySweep, ValidationResult } from "../../validation/engine";
+import { compareValidationRunRecords } from "../../validation/runComparison";
 import type { ValidationRunRecord } from "../../validation/runHistory";
 import { downloadValidationReport } from "../downloadValidationReport";
 import { NumberField } from "./GeometryRoute";
@@ -143,6 +145,12 @@ export function WorkflowRoute({
       <ValidationMetrics validation={validation} isValidationStale={isValidationStale} />
       <ValidationReport validation={validation} isValidationStale={isValidationStale} />
       <SParameterPlot validation={validation} isValidationStale={isValidationStale} />
+      <TraceWidthSweepPanel
+        geometry={geometry}
+        onGeometryChange={onGeometryChange}
+        modelId={modelId}
+        sweep={sweep}
+      />
       <RunHistoryPanel
         records={runHistory}
         onSelectRun={onSelectRun}
@@ -179,6 +187,107 @@ export function WorkflowRoute({
   }
 }
 
+function TraceWidthSweepPanel({
+  geometry,
+  onGeometryChange,
+  modelId,
+  sweep
+}: {
+  geometry: RfGeometry;
+  onGeometryChange: (geometry: RfGeometry) => void;
+  modelId: AnalyticalModelId;
+  sweep: FrequencySweep;
+}) {
+  const trace = geometry.traces[0];
+  const currentWidthMm = trace ? mToMm(trace.widthM) : 1;
+  const [startWidthMm, setStartWidthMm] = useState(Math.max(0.05, currentWidthMm * 0.7));
+  const [stopWidthMm, setStopWidthMm] = useState(currentWidthMm * 1.3);
+  const [targetImpedanceOhms, setTargetImpedanceOhms] = useState(50);
+  const [points, setPoints] = useState(21);
+  const [result, setResult] = useState<TraceWidthSweepResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  function runSweep() {
+    try {
+      setResult(
+        runTraceWidthSweep({
+          geometry,
+          modelId,
+          frequencyHz: (sweep.startHz + sweep.stopHz) / 2,
+          targetImpedanceOhms,
+          startWidthM: mmToM(startWidthMm),
+          stopWidthM: mmToM(stopWidthMm),
+          points
+        })
+      );
+      setError(null);
+    } catch (caught) {
+      setResult(null);
+      setError(caught instanceof Error ? caught.message : "Trace width sweep failed.");
+    }
+  }
+
+  function applyBestWidth() {
+    if (!result || !trace) return;
+    onGeometryChange({
+      ...geometry,
+      traces: [{ ...trace, widthM: result.best.traceWidthM }, ...geometry.traces.slice(1)]
+    });
+  }
+
+  return (
+    <div className="table-section">
+      <div className="section-heading-row">
+        <h2>Trace width sweep</h2>
+        <button className="secondary-button" onClick={runSweep}>
+          <Play size={18} />
+          <span>Run sweep</span>
+        </button>
+      </div>
+      <div className="sweep-controls">
+        <NumberField label="Min width (mm)" value={startWidthMm} step={0.05} onChange={setStartWidthMm} />
+        <NumberField label="Max width (mm)" value={stopWidthMm} step={0.05} onChange={setStopWidthMm} />
+        <NumberField label="Target Z0 (ohms)" value={targetImpedanceOhms} step={0.5} onChange={setTargetImpedanceOhms} />
+        <NumberField label="Points" value={points} step={1} onChange={(value) => setPoints(Math.max(2, Math.round(value)))} />
+      </div>
+      {error && <p className="error-text">{error}</p>}
+      {result && (
+        <>
+          <div className="run-summary">
+            <span>Best width: {mToMm(result.best.traceWidthM).toFixed(3)} mm</span>
+            <span>Z0: {result.best.characteristicImpedanceOhms.toFixed(2)} ohms</span>
+            <span>Error: {result.best.errorOhms.toFixed(2)} ohms</span>
+            <span>Frequency: {(result.frequencyHz / 1e9).toFixed(3)} GHz</span>
+          </div>
+          <button className="secondary-button sweep-apply-button" onClick={applyBestWidth}>
+            Apply best width to geometry
+          </button>
+          <table>
+            <thead>
+              <tr>
+                <th>Trace width</th>
+                <th>Z0</th>
+                <th>Error</th>
+                <th>Effective er</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.points.map((point) => (
+                <tr key={point.traceWidthM}>
+                  <td>{mToMm(point.traceWidthM).toFixed(3)} mm</td>
+                  <td>{point.characteristicImpedanceOhms.toFixed(2)} ohms</td>
+                  <td>{point.errorOhms.toFixed(2)} ohms</td>
+                  <td>{point.effectiveRelativePermittivity.toFixed(3)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  );
+}
+
 function RunHistoryPanel({
   records,
   onSelectRun,
@@ -188,6 +297,8 @@ function RunHistoryPanel({
   onSelectRun: (record: ValidationRunRecord) => void;
   onDeleteRun: (recordId: string) => void;
 }) {
+  const comparison = records.length >= 2 ? compareValidationRunRecords(records[1], records[0]) : null;
+
   return (
     <div className="table-section">
       <div className="section-heading-row">
@@ -221,8 +332,45 @@ function RunHistoryPanel({
           ))}
         </div>
       )}
+      {comparison && (
+        <div className="run-comparison">
+          <h3>Latest run comparison</h3>
+          <p className="field-note">
+            Candidate is the newest saved run. Baseline is the previous saved run.
+            {comparison.modelChanged ? " Analytical model changed." : ""}
+            {comparison.passChanged ? " Pass/fail status changed." : ""}
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Baseline</th>
+                <th>Candidate</th>
+                <th>Delta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comparison.metrics.map((metric) => (
+                <tr key={metric.label}>
+                  <td>{metric.label}</td>
+                  <td>{formatComparisonValue(metric.baselineValue, metric.unit)}</td>
+                  <td>{formatComparisonValue(metric.candidateValue, metric.unit)}</td>
+                  <td>
+                    {formatComparisonValue(metric.delta, metric.unit)} ({metric.percentDelta.toFixed(2)}%)
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
+}
+
+function formatComparisonValue(value: number, unit: string) {
+  if (unit === "s") return `${(value * 1e12).toFixed(2)} ps`;
+  return `${value.toFixed(4)}${unit ? ` ${unit}` : ""}`;
 }
 
 function TouchstoneUpload({

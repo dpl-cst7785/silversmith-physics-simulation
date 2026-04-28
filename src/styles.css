@@ -442,6 +442,30 @@ legend {
   font-size: 0.92rem;
 }
 
+.sweep-controls {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  margin-top: 14px;
+}
+
+.run-comparison {
+  border-top: 1px solid #e4ece9;
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.run-comparison h3 {
+  font-size: 0.98rem;
+  margin: 0;
+}
+
+.sweep-apply-button {
+  margin-top: 12px;
+}
+
 .metric {
   display: grid;
   gap: 8px;

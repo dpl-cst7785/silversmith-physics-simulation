@@ -20,6 +20,8 @@ transmission-line geometry + materials -> analytical model -> mock S-parameters 
 - Validation metrics with expected value, observed value, absolute error, percent error, tolerance, and pass/fail status.
 - Exportable JSON validation reports containing geometry, material stackup, sweep settings, analytical results, mock S-parameters, solver metadata, validation metrics, and optional Touchstone summary.
 - Local run history for selecting prior validation records and restoring their geometry, sweep, analytical results, mock simulation output, and validation metrics.
+- Latest-run comparison for Z0, effective dielectric constant, estimated loss, propagation delay, and electrical length deltas.
+- Trace-width sweep studies that use the analytical model to find the width closest to a target impedance.
 - Touchstone `.s1p` and `.s2p` parser for frequency units, real/imaginary, magnitude/angle, and dB/angle formats.
 
 ## Microstrip Model Assumptions
@@ -139,6 +141,7 @@ For the current transmission-line workflow:
 5. Emit pass/fail metrics based on percent tolerance.
 6. Export a validation report JSON artifact for review, regression comparison, or future cloud solver job records.
 7. Save the run locally so previous geometry/simulation/validation records can be selected again.
+8. Compare the two latest saved runs or run a local trace-width sweep against a target impedance.
 
 Validation runs only when the user clicks `Run validation`, so edits can be staged before recomputing the report.
 
