@@ -39,6 +39,14 @@ export type FieldSurface = {
   maxMagnitudeVm: number;
 };
 
+export type FieldVolume = {
+  positions: number[];
+  colors: number[];
+  amplitudes: number[];
+  phases: number[];
+  maxMagnitudeVm: number;
+};
+
 export function buildTraceFieldSamples(
   geometry: RfGeometry,
   options: {
@@ -206,6 +214,69 @@ export function buildSolverFieldSurface(
   };
 }
 
+export function buildSolverFieldVolume(
+  fieldSolve: FieldSolverResult,
+  options: {
+    samplesAlongTrace?: number;
+    samplesAcrossSection?: number;
+    heightLevels?: number;
+    lengthM?: number;
+    xOffsetM?: number;
+    minNormalizedMagnitude?: number;
+  } = {}
+): FieldVolume {
+  const samplesAlongTrace = options.samplesAlongTrace ?? 64;
+  const samplesAcrossSection = options.samplesAcrossSection ?? 34;
+  const heightLevels = options.heightLevels ?? 24;
+  const lengthM = options.lengthM ?? fieldSolve.grid.domainWidthM;
+  const xOffsetM = options.xOffsetM ?? 0;
+  const minNormalizedMagnitude = options.minNormalizedMagnitude ?? 0.018;
+  const maxMagnitudeVm = Math.max(fieldSolve.field.maxElectricFieldVm, 1);
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const amplitudes: number[] = [];
+  const phases: number[] = [];
+  const yStopM = Math.min(fieldSolve.grid.domainHeightM, fieldSolve.grid.substrateHeightM * 2.7);
+
+  for (let ix = 0; ix < samplesAlongTrace; ix += 1) {
+    const xFraction = samplesAlongTrace === 1 ? 0.5 : ix / (samplesAlongTrace - 1);
+    const phaseRad = xFraction * Math.PI * 2;
+    const xM = xOffsetM + lengthM * xFraction;
+
+    for (let iz = 0; iz < samplesAcrossSection; iz += 1) {
+      const zFraction = samplesAcrossSection === 1 ? 0.5 : iz / (samplesAcrossSection - 1);
+      const crossSectionXM = zFraction * fieldSolve.grid.domainWidthM;
+
+      for (let iy = 0; iy < heightLevels; iy += 1) {
+        const yFraction = heightLevels === 1 ? 0.5 : iy / (heightLevels - 1);
+        const yM = yStopM * yFraction;
+        const field = sampleFieldGrid(fieldSolve, crossSectionXM, yM);
+        const normalized = Math.min(1, field.magnitudeVm / maxMagnitudeVm);
+        if (normalized < minNormalizedMagnitude) continue;
+
+        const softened = Math.sqrt(normalized);
+        const sign = field.eyVm >= 0 ? 1 : -1;
+        positions.push(
+          xM + deterministicJitter(ix, iy, iz, 0) * lengthM * 0.003,
+          yM + deterministicJitter(ix, iy, iz, 1) * yStopM * 0.02,
+          crossSectionXM + deterministicJitter(ix, iy, iz, 2) * fieldSolve.grid.domainWidthM * 0.006
+        );
+        colors.push(...fieldColor(softened, sign));
+        amplitudes.push(softened);
+        phases.push(phaseRad);
+      }
+    }
+  }
+
+  return {
+    positions,
+    colors,
+    amplitudes,
+    phases,
+    maxMagnitudeVm
+  };
+}
+
 export function sampleInstantaneousField(sample: FieldSample, animationPhaseRad: number): number {
   return sample.amplitude * Math.sin(animationPhaseRad - sample.phaseRad);
 }
@@ -276,7 +347,12 @@ export function sampleFieldGrid(
 }
 
 function fieldColor(normalized: number, sign: number): [number, number, number] {
-  const base = 0.12 + normalized * 0.25;
-  if (sign >= 0) return [base + normalized * 1.25, base * 0.65, base * 0.75];
-  return [base * 0.65, base * 0.85, base + normalized * 1.25];
+  const base = 0.08 + normalized * 0.18;
+  if (sign >= 0) return [Math.min(1, base + normalized * 0.82), base * 0.55, base * 0.62];
+  return [base * 0.55, base * 0.75, Math.min(1, base + normalized * 0.82)];
+}
+
+function deterministicJitter(ix: number, iy: number, iz: number, salt: number): number {
+  const value = Math.sin((ix + 1) * 12.9898 + (iy + 1) * 78.233 + (iz + 1) * 37.719 + salt * 19.19);
+  return (value - Math.floor(value) - 0.5) * 2;
 }

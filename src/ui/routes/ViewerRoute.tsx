@@ -4,26 +4,26 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BufferGeometry,
   Color,
-  DoubleSide,
   Float32BufferAttribute,
   Group,
   Mesh,
   MeshStandardMaterial,
+  Points,
   Quaternion,
+  ShaderMaterial,
   Uint16BufferAttribute,
   Vector3
 } from "three";
 import { mToMm, type RfGeometry } from "../../domain/geometry";
 import {
   buildConnectorProbeFrames,
-  buildSolverFieldSamples,
-  buildSolverFieldSurface,
+  buildSolverFieldVolume,
   buildTraceFieldSamples,
   estimateFieldSolveMs,
   sampleInstantaneousField,
   type ConnectorProbeFrame,
   type FieldSample,
-  type FieldSurface
+  type FieldVolume
 } from "../../fields/fieldSampling";
 import { buildExtrudedGeometryMesh, type ExtrudedMeshSolid } from "../../geometry/extrudedMesh";
 import { getAnalyticalModelDescriptor, type AnalyticalModelId } from "../../physics/analyticalModels";
@@ -230,12 +230,15 @@ function ExtrudedMeshScene({
   const trace = geometry.traces[0];
   const model = getAnalyticalModelDescriptor(modelId);
   const fieldSamples = useMemo(
-    () => fieldMode === "solver" ? buildSolverFieldSamples(geometry, fieldSolve) : buildTraceFieldSamples(geometry),
-    [fieldMode, fieldSolve, geometry]
+    () => fieldMode === "solver" ? [] : buildTraceFieldSamples(geometry),
+    [fieldMode, geometry]
   );
-  const fieldSurface = useMemo(
-    () => buildSolverFieldSurface(fieldSolve, { lengthM: trace?.lengthM ?? geometry.boardLengthM }),
-    [fieldSolve, geometry.boardLengthM, trace?.lengthM]
+  const fieldVolume = useMemo(
+    () => buildSolverFieldVolume(fieldSolve, {
+      lengthM: trace?.lengthM ?? geometry.boardLengthM,
+      xOffsetM: trace?.xM ?? 0
+    }),
+    [fieldSolve, geometry.boardLengthM, trace?.lengthM, trace?.xM]
   );
 
   return (
@@ -243,7 +246,7 @@ function ExtrudedMeshScene({
       {solids.map((solid) => (
         <MeshSolid key={solid.id} solid={solid} />
       ))}
-      {fieldMode === "solver" && <FieldSurfaceMesh surface={fieldSurface} />}
+      {fieldMode === "solver" && <FieldVolumeCloud volume={fieldVolume} />}
       <AnimatedFieldHeatmap samples={fieldSamples} onSelectSample={onSelectSample} />
       {trace && (
         <>
@@ -276,23 +279,76 @@ function ExtrudedMeshScene({
   );
 }
 
-function FieldSurfaceMesh({ surface }: { surface: FieldSurface }) {
+function FieldVolumeCloud({ volume }: { volume: FieldVolume }) {
+  const pointsRef = useRef<Points>(null);
+  const materialRef = useRef<ShaderMaterial>(null);
   const geometry = useMemo(() => {
     const bufferGeometry = new BufferGeometry();
-    const positionsMm = surface.positions.map((value) => mToMm(value));
+    const positionsMm = volume.positions.map((value) => mToMm(value));
     bufferGeometry.setAttribute("position", new Float32BufferAttribute(positionsMm, 3));
-    bufferGeometry.setAttribute("color", new Float32BufferAttribute(surface.colors, 3));
-    bufferGeometry.setIndex(surface.indices);
-    bufferGeometry.computeVertexNormals();
+    bufferGeometry.setAttribute("color", new Float32BufferAttribute(volume.colors, 3));
+    bufferGeometry.setAttribute("fieldAmplitude", new Float32BufferAttribute(volume.amplitudes, 1));
+    bufferGeometry.setAttribute("fieldPhase", new Float32BufferAttribute(volume.phases, 1));
     return bufferGeometry;
-  }, [surface]);
+  }, [volume]);
+
+  useFrame(({ clock }) => {
+    if (materialRef.current) materialRef.current.uniforms.time.value = clock.elapsedTime;
+  });
 
   return (
-    <mesh geometry={geometry}>
-      <meshBasicMaterial vertexColors transparent opacity={0.72} side={DoubleSide} depthWrite={false} />
-    </mesh>
+    <points ref={pointsRef} geometry={geometry}>
+      <shaderMaterial
+        ref={materialRef}
+        transparent
+        depthWrite={false}
+        uniforms={{ time: { value: 0 }, pointSize: { value: 5.2 } }}
+        vertexShader={fieldVolumeVertexShader}
+        fragmentShader={fieldVolumeFragmentShader}
+      />
+    </points>
   );
 }
+
+const fieldVolumeVertexShader = `
+  attribute vec3 color;
+  attribute float fieldAmplitude;
+  attribute float fieldPhase;
+  varying float vAmplitude;
+  varying float vPhase;
+  varying vec3 vColor;
+  uniform float pointSize;
+
+  void main() {
+    vAmplitude = fieldAmplitude;
+    vPhase = fieldPhase;
+    vColor = clamp(color, 0.0, 1.0);
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = pointSize * (0.6 + fieldAmplitude * 1.4) * (300.0 / max(80.0, -mvPosition.z));
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const fieldVolumeFragmentShader = `
+  varying float vAmplitude;
+  varying float vPhase;
+  varying vec3 vColor;
+  uniform float time;
+
+  void main() {
+    vec2 uv = gl_PointCoord - vec2(0.5);
+    float radius = length(uv);
+    float softDisc = smoothstep(0.5, 0.0, radius);
+    float core = smoothstep(0.22, 0.0, radius);
+    float wave = 0.5 + 0.5 * sin(time * 3.2 - vPhase);
+    vec3 red = vec3(1.0, 0.12, 0.08);
+    vec3 blue = vec3(0.08, 0.46, 1.0);
+    vec3 fluidColor = mix(blue, red, wave);
+    vec3 color = mix(vColor, fluidColor, 0.72);
+    float alpha = softDisc * (0.018 + vAmplitude * 0.095) + core * vAmplitude * 0.035;
+    gl_FragColor = vec4(color, alpha);
+  }
+`;
 
 function AnimatedFieldHeatmap({
   samples,

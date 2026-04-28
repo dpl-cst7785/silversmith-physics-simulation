@@ -6,6 +6,7 @@ import {
   buildConnectorProbeFrames,
   buildSolverFieldSamples,
   buildSolverFieldSurface,
+  buildSolverFieldVolume,
   estimateFieldSolveMs,
   buildTraceFieldSamples,
   sampleInstantaneousField
@@ -64,6 +65,29 @@ describe("field sampling", () => {
     expect(surface.indices.length).toBeGreaterThan(0);
     expect(surface.maxMagnitudeVm).toBeGreaterThan(0);
     expect(estimateFieldSolveMs({ cellsX: 64, cellsY: 48, maxIterations: 7_000 })).toBeGreaterThan(0);
+  });
+
+  it("builds a volumetric field cloud from solver data", () => {
+    const geometry = defaultGeometry(defaultSubstrate, copper);
+    const solve = solveMicrostripFiniteDifference(geometry, {
+      cellsX: 32,
+      cellsY: 24,
+      maxIterations: 4_000,
+      tolerance: 1e-4
+    });
+    const volume = buildSolverFieldVolume(solve, {
+      samplesAlongTrace: 4,
+      samplesAcrossSection: 5,
+      heightLevels: 4,
+      lengthM: geometry.traces[0].lengthM,
+      xOffsetM: geometry.traces[0].xM
+    });
+
+    expect(volume.positions.length).toBeGreaterThan(0);
+    expect(volume.positions.length % 3).toBe(0);
+    expect(volume.colors).toHaveLength(volume.positions.length);
+    expect(volume.amplitudes).toHaveLength(volume.positions.length / 3);
+    expect(volume.phases).toHaveLength(volume.positions.length / 3);
   });
 
   it("samples signed instantaneous field values from phase", () => {
