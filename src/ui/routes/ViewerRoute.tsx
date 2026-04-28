@@ -28,6 +28,7 @@ import {
 import { buildExtrudedGeometryMesh, type ExtrudedMeshSolid } from "../../geometry/extrudedMesh";
 import { getAnalyticalModelDescriptor, type AnalyticalModelId } from "../../physics/analyticalModels";
 import { buildFieldDiagnostics } from "../../simulation/fieldDiagnostics";
+import type { FieldSolverWorkerResponse } from "../../simulation/fieldSolverWorkerMessages";
 import { solveMicrostripFiniteDifference, type FieldSolverOptions, type FieldSolverResult } from "../../simulation/finiteDifferenceMicrostrip";
 
 type Props = {
@@ -54,30 +55,70 @@ export function ViewerRoute({ geometry, modelId }: Props) {
   );
   const [isSolving, setIsSolving] = useState(false);
   const [elapsedSolveMs, setElapsedSolveMs] = useState(0);
+  const [solveError, setSolveError] = useState<string | null>(null);
   const solveStartedAtRef = useRef<number | null>(null);
+  const solveRequestIdRef = useRef(0);
   const projectedSolveMs = useMemo(() => estimateFieldSolveMs(fieldSettings), [fieldSettings]);
 
   useEffect(() => {
     let cancelled = false;
+    let worker: Worker | null = null;
     const started = performance.now();
+    const requestId = solveRequestIdRef.current + 1;
+    solveRequestIdRef.current = requestId;
     solveStartedAtRef.current = started;
     setIsSolving(true);
     setElapsedSolveMs(0);
+    setSolveError(null);
+
+    const finishSolve = (nextSolve: FieldSolverResult, runtimeMs: number) => {
+      if (cancelled || solveRequestIdRef.current !== requestId) return;
+      setFieldSolve(nextSolve);
+      setSelectedSample(null);
+      setElapsedSolveMs(runtimeMs);
+      setIsSolving(false);
+      solveStartedAtRef.current = null;
+    };
+
+    const runOnMainThread = () => {
+      const nextSolve = solveMicrostripFiniteDifference(geometry, fieldSettings);
+      finishSolve(nextSolve, performance.now() - started);
+    };
 
     const timer = window.setTimeout(() => {
-      const nextSolve = solveMicrostripFiniteDifference(geometry, fieldSettings);
-      if (!cancelled) {
-        setFieldSolve(nextSolve);
-        setSelectedSample(null);
-        setElapsedSolveMs(performance.now() - started);
-        setIsSolving(false);
-        solveStartedAtRef.current = null;
+      if (typeof Worker === "undefined") {
+        runOnMainThread();
+        return;
       }
+
+      worker = new Worker(new URL("../../simulation/fieldSolver.worker.ts", import.meta.url), {
+        type: "module"
+      });
+      worker.onmessage = (event: MessageEvent<FieldSolverWorkerResponse>) => {
+        if (cancelled || event.data.requestId !== requestId) return;
+
+        if (event.data.ok) {
+          finishSolve(event.data.result, event.data.runtimeMs);
+        } else {
+          setSolveError(event.data.error);
+          setIsSolving(false);
+          solveStartedAtRef.current = null;
+        }
+        worker?.terminate();
+      };
+      worker.onerror = () => {
+        if (cancelled) return;
+        setSolveError("Worker solve failed; rerunning on the main thread.");
+        runOnMainThread();
+        worker?.terminate();
+      };
+      worker.postMessage({ requestId, geometry, options: fieldSettings });
     }, 20);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      worker?.terminate();
       solveStartedAtRef.current = null;
     };
   }, [fieldSettings, geometry]);
@@ -137,8 +178,9 @@ export function ViewerRoute({ geometry, modelId }: Props) {
         </div>
       </div>
       <FieldSolverControls settings={fieldSettings} onSettingsChange={setFieldSettings} />
+      {solveError && <p className="stale-text">{solveError}</p>}
       <div className="viewer-shell">
-        {isSolving && projectedSolveMs > 1_000 && (
+        {isSolving && (projectedSolveMs > 1_000 || elapsedSolveMs > 1_000) && (
           <SolveOverlay elapsedMs={elapsedSolveMs} projectedMs={projectedSolveMs} />
         )}
         <Canvas camera={{ position: [34, 28, 46], fov: 38 }}>
@@ -391,7 +433,7 @@ function SolveOverlay({ elapsedMs, projectedMs }: { elapsedMs: number; projected
       <div>
         <strong>Solving finite-difference field</strong>
         <span>
-          Projected {formatDuration(projectedMs)} · elapsed {formatDuration(elapsedMs)}
+          Projected {formatDuration(projectedMs)} / elapsed {formatDuration(elapsedMs)}
         </span>
       </div>
     </div>
